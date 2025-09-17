@@ -24,9 +24,10 @@ The two Raspberry Pis communicate with each other over an Ethernet network.
 ## Team
 * **Abby Horning**
 * **Jake Thurman**
+* **Chuanyu Xue** (Project Owner)
 
 ## Project Motivation
-![Sample Project Summary Description](Project_Summary_2025.pdf)  
+![Sample Project Summary Description](pictures/Project_Summary_2025.png)  
 
 ## License
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)  
