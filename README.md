@@ -1,6 +1,10 @@
-# IoT Real-Time Scheduler Evaluation
+# IoT-RTS (Real-Time Scheduler) Evaluation
 
 This repository contains the code and documentation for a course project on the Architecture of Internet of Things (IoT).
+
+![Raspberry Pi](https://img.shields.io/badge/-Raspberry_Pi-C51A4A?style=for-the-badge&logo=Raspberry-Pi)
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![C](https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white)
 
 ## Project Overview
 The primary goal of this project is to experimentally evaluate how a **real-time traffic scheduler** improves the control quality of a physical system. The project uses a **ball-floating testbed** consisting of two Raspberry Pi boards to demonstrate the effects of network congestion and the subsequent performance gains from applying a real-time scheduler.
@@ -13,20 +17,34 @@ The experimental setup includes a pre-built ball-floating testbed with two Raspb
 The two Raspberry Pis communicate with each other over an Ethernet network.
 
 ## Project Phases
-1.  **Baseline Control**: We implement a **PID controller** to stabilize the ball at a target position under ideal network conditions.
-2.  **Congestion Introduction**: We intentionally introduce **network congestion** on the Ethernet connection and observe the degradation in the ball's control quality.
-3.  **Scheduler Implementation**: We apply a real-time traffic scheduler (such as the Linux ETF scheduler) to the network and compare the improved control performance against the degraded baseline.
+This project is divided into four main phases, each with a key milestone.
+
+* **Phase 1: Project Initiation & PID Control Implementation**
+    * **Milestone:** Proposal Submission (September 27)
+    * **Activities:** Finalize the project plan, acquire necessary materials, and implement the baseline **PID controller** to stabilize the ball. 
+
+* **Phase 2: Performance Degradation Baseline**
+    * **Milestone:** Successful demonstration of network congestion and performance degradation.
+    * **Activities:** Introduce network congestion on the Ethernet link and record the resulting control quality degradation. This establishes our baseline for performance. 
+
+* **Phase 3: Real-Time Scheduler Evaluation**
+    * **Milestone:** Implementation of the real-time traffic scheduler and collection of performance data.
+    * **Activities:** Implement and apply a **real-time traffic scheduler** (e.g., Linux ETF or KeepON) to the network. Conduct experiments to compare the improved control performance against the degraded baseline. 
+
+* **Phase 4: Analysis & Final Report**
+    * **Milestone:** Final project report and presentation submission (December 12).
+    * **Activities:** Analyze all collected data, focusing on key trade-offs in cost, power, and performance. Prepare the final report and presentation for submission. 
 
 ## Hardware and Software 
 * **Hardware**:
   * **Testbed**: A pre-built ball-floating testbed .
-  * **Compute**: Two Raspberry Pi boards.
+  * **Compute**: Two Raspberry Pi boards. 
   * **Sensors**: A depth sensor for ball position monitoring.
   * **Actuators**: A PWM fan for position control.
   * **Networking**: Ethernet cables for communication.
 
 * **Software**: 
-  * **Operating System**: _Linux distro...?_
+  * **Operating System**: 
   * **Programming Languages**: **C** and **Python**. 
   * **Scheduling Tools**: Linux ETF scheduler or KeepON driver.
   * **Libraries**: Required libraries for PID control, sensor data acquisition, and fan control.
@@ -35,14 +53,6 @@ The two Raspberry Pis communicate with each other over an Ethernet network.
 * **Abby Horning**
 * **Jake Thurman**
 * **Chuanyu Xue** (Project Owner)
-
-## Deliverables and Timeline
-
-* **Weeks 1-3**: Familiarize ourselves with the hardware and implement the baseline **PID controller** to stabilize the ball.
-* **Weeks 4-6**: Introduce network congestion and record the resulting control degradation, which will serve as our un-scheduled performance benchmark.
-* **Weeks 7-9**: Implement a real-time traffic scheduler and compare the improved control performance against the baseline.
-* **Weeks 10-12**: Collect and analyze final performance data, focusing on key trade-offs. We will use this information to create the final project report and presentation.
-
 
 ## Project Motivation
 The background, motivation and goals for this project are derived from Chuanyu's original idea:  
