@@ -2,10 +2,6 @@
 
 This repository contains the code and documentation for a course project on the Architecture of Internet of Things (IoT).
 
-![Raspberry Pi](https://img.shields.io/badge/-Raspberry_Pi-C51A4A?style=for-the-badge&logo=Raspberry-Pi)
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-![C](https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white)
-
 ## Project Overview
 The primary goal of this project is to experimentally evaluate how a **real-time traffic scheduler** improves the control quality of a physical system. The project uses a **ball-floating testbed** consisting of two **Raspberry Pi Compute Modules** to demonstrate the effects of network congestion and the subsequent performance gains from applying a real-time scheduler.
 
