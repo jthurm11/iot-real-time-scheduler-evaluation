@@ -53,7 +53,7 @@ This project is divided into four main phases, each with a key milestone.
 ## Project Motivation
 The physical testbed design and baseline control are based on the initial starting project by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk), but the advanced objectives (real-time scheduling and network evaluation) are derived from Chuanyu's course project idea.
 
-![Sample Project Summary Description](pictures/Project_Summary_2025.png) 
+![Sample Project Summary Description](pics/Project_Summary_2025.png) 
 
 ## System Design Attribution
 
@@ -65,3 +65,12 @@ The original source is licensed under **Creative Commons Attribution-NonCommerci
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 This derivative work (all files outside of `/orig`) is licensed under the [MIT License](LICENSE).
+
+## References
+1. Salzmann et al. (2025): Hovering a ping-pong ball: A demonstration setup for teaching PID control (https://doi.org/10.26434/chemrxiv-2025-328tk)  
+2. An example of how linux traffic scheduler improves control under traffic congestion: (https://github.com/NXP/dds-tsn)
+3. Depth/Distance Sensors: 
+        - (https://randomnerdtutorials.com/complete-guide-for-ultrasonic-sensor-hc-sr04/) 
+4. For PWM Fan Control:
+        - PWM basics: https://www.arduino.cc/en/Tutorial/Foundations/PWM  
+        - PWM fan control: https://github.com/folkhack/raspberry-pi-pwm-fan-2  
