@@ -51,15 +51,15 @@ This project is divided into four main phases, each with a key milestone.
 * **Chuanyu Xue** (Project Owner)
 
 ## Project Motivation
-The physical testbed design and baseline control are based on the initial starting project by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk), but the advanced objectives (real-time scheduling and network evaluation) are derived from Chuanyu's course project idea.
+The physical testbed design and baseline control are based on the initial starting project by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk), but the advanced objectives (real-time scheduling and network evaluation) are derived from Chuanyu's course project idea. The originating material from Chuanyu's project can be found in the [/orig](/orig) directory. 
 
 ![Sample Project Summary Description](pics/Project_Summary_2025.png) 
 
 ## System Design Attribution
 
-The physical ball-floating testbed design and original baseline code (found in the [`/orig`](/orig) directory) are based on the **"PingPongPID"** system described by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk).
+The physical ball-floating testbed design and original baseline code are based on the **"PingPongPID"** system described by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk). A copy of the published paper can also be found in the [/docs](/docs) directory. 
 
-The original source is licensed under **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International** [(CC BY-NC-ND 4.0)](https://creativecommons.org/licenses/by-nc-nd/4.0/). Our project is a derivative work, focusing on advanced network scheduling evaluation, and is conducted strictly for non-commercial educational purposes.
+The original source project is licensed under **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International** [(CC BY-NC-ND 4.0)](https://creativecommons.org/licenses/by-nc-nd/4.0/). Our project is a derivative work, focusing on advanced network scheduling evaluation, and is conducted strictly for non-commercial educational purposes.
 
 ## License
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 

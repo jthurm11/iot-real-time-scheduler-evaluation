@@ -1,0 +1,13 @@
+In this file, I'm going to explain how to physically configure the ultrasonic sensor, breadboard, and raspberry pi.
+
+Materials needed:
+- Rasbperry pi
+- HC SR04 ultrasonic sensor
+- 8 male to female jumper wires (2 of each different color recommended)
+- 1 K Ohm resistor
+- 2 K Ohm resistor
+
+Steps:
+1. Plug a wire into the Vcc port of the ultrasonic sensor and the positive rail of the breadboard 
+2. Next to that wire on the positive rail, plug in a wire and connect it to physical GPIO pin 2 on the RPi
+3. 
