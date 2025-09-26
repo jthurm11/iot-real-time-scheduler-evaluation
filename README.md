@@ -58,6 +58,13 @@ This project is divided into four main phases, each with a key milestone.
 The background, motivation and goals for this project are derived from Chuanyu's original idea:  
 ![Sample Project Summary Description](pictures/Project_Summary_2025.png)  
 
+## System Design Attribution
+
+The physical ball-floating testbed design and original baseline code (found in the [`/orig`](/orig) directory) are based on the **"PingPongPID"** system described by [Salzmann et al. (2025)](https://doi.org/10.26434/chemrxiv-2025-328tk).
+
+The original source is licensed under **Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International** [(CC BY-NC-ND 4.0)](https://creativecommons.org/licenses/by-nc-nd/4.0/). Our project is a derivative work, focusing on advanced network scheduling evaluation, and is conducted strictly for non-commercial educational purposes.
+
 ## License
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)  
-This project is licensed under the [MIT License](LICENSE).  
+
+This derivative work (all files outside of `/orig`) is licensed under the [MIT License](LICENSE).
