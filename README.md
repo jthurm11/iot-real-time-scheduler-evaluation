@@ -67,10 +67,12 @@ The original source project is licensed under **Creative Commons Attribution-Non
 This derivative work (all files outside of `/orig`) is licensed under the [MIT License](LICENSE).
 
 ## References
-1. Salzmann et al. (2025): Hovering a ping-pong ball: A demonstration setup for teaching PID control (https://doi.org/10.26434/chemrxiv-2025-328tk)  
-2. An example of how linux traffic scheduler improves control under traffic congestion: (https://github.com/NXP/dds-tsn)
-3. Depth/Distance Sensors: 
-        - (https://randomnerdtutorials.com/complete-guide-for-ultrasonic-sensor-hc-sr04/) 
-4. For PWM Fan Control:
-        - PWM basics: https://www.arduino.cc/en/Tutorial/Foundations/PWM  
-        - PWM fan control: https://github.com/folkhack/raspberry-pi-pwm-fan-2  
+1. Salzmann et al. (2025): Hovering a ping-pong ball: A demonstration setup for teaching PID control
+      - (https://doi.org/10.26434/chemrxiv-2025-328tk)  
+2. An example of how linux traffic scheduler improves control under traffic congestion:  
+      - (https://github.com/NXP/dds-tsn)
+3. Depth/Distance Sensors:  
+      - (https://randomnerdtutorials.com/complete-guide-for-ultrasonic-sensor-hc-sr04/)  
+4. PWM Fan Control:  
+      - PWM basics: https://www.arduino.cc/en/Tutorial/Foundations/PWM  
+      - PWM fan control: https://github.com/folkhack/raspberry-pi-pwm-fan-2  
