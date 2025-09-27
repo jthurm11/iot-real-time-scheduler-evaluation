@@ -6,10 +6,10 @@ This directory contains all formal documentation, reports, presentations, and su
 
 | Document | Status | Description |
 | :--- | :--- | :--- |
-| [`Project Proposal.pdf`](Project%20Proposal.pdf) | **Submitted** | The official project plan, objectives, hardware/software requirements, and timeline. |
-| [`Final Report.pdf`](Final%20Report.pdf) | *Pending* | The final document detailing experimental setup, methodology, data analysis, and conclusions. |
-| [`Midterm Presentation.pptx`](Midterm%20Presentation.pptx) | *Pending* | Slides for the interim project progress presentation. |
-| [`Final Presentation.pptx`](Final%20Presentation.pptx) | *Pending* | Slides summarizing the project's results and findings. |
+| [`Project Proposal.pdf`](Project_Proposal.pdf) | **Submitted** | The official project plan, objectives, hardware/software requirements, and timeline. |
+| [`Final Report.pdf`](Final_Report.pdf) | *Pending* | The final document detailing experimental setup, methodology, data analysis, and conclusions. |
+| [`Midterm Presentation.pptx`](Midterm_Presentation.pptx) | *Pending* | Slides for the interim project progress presentation. |
+| [`Final Presentation.pptx`](Final_Presentation.pptx) | *Pending* | Slides summarizing the project's results and findings. |
 
 ## References
 
