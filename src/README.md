@@ -10,7 +10,7 @@ This subdirectory contains all code intended to run on the **Actuator Node (host
 
 * **Primary Function:** Receives control signals from `beta/` and adjusts the fan's PWM output.
 * **Key Files:**
-    * `fan_controller.py`: Code to interface with and control the PWM fan.
+    * `fan_controller.py` _(name TBD)_: Code to interface with and control the PWM fan.
     * Networking scripts for receiving control signals.
 
 ## 2. beta/ (Sensor/Controller Node)
@@ -19,8 +19,8 @@ This subdirectory contains all code intended to run on the **Sensor/Controller N
 
 * **Primary Function:** Runs the main control loop, measures ball position, calculates the PID output, and transmits control signals to `alpha/`.
 * **Key Files:**
-    * `pid_controller.py`: The core PID control loop implementation.
-    * `sensor_read.py`: Code to interface with the ultrasonic depth sensor.
+    * `pid_controller.py` _(name TBD)_: The core PID control loop implementation.
+    * `sensor_read.py` _(name TBD)_: Code to interface with the ultrasonic depth sensor.
     * Networking scripts for sending control signals and logging data.
 
 ## 3. shared_libs/ (Optional)
