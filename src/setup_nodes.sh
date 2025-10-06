@@ -57,21 +57,45 @@ log_message() {
 
 # Function to assign static IP based on hostname
 get_signal_ip() {
+    # Disabling output for a quiet function
     #log_message "--- SET SIGNAL IP ---"
-    case "$TARGET_HOSTNAME" in
+    case "$TARGET_NODE" in
         "alpha")
             TARGET_IP="${SIGNAL_NET_PREFIX}.1/24"
-            DEST_NODE="beta"
-            DEST_IP="${SIGNAL_NET_PREFIX}.2"
+            NEIGHBOR_NODE="beta"
+            NEIGHBOR_IP="${SIGNAL_NET_PREFIX}.2"
             ;;
         "beta")
             TARGET_IP="${SIGNAL_NET_PREFIX}.2/24"
-            DEST_NODE="alpha"
-            DEST_IP="${SIGNAL_NET_PREFIX}.1"
+            NEIGHBOR_NODE="alpha"
+            NEIGHBOR_IP="${SIGNAL_NET_PREFIX}.1"
             ;;
     esac
-    export TARGET_IP DEST_NODE DEST_IP
+    export TARGET_IP NEIGHBOR_NODE NEIGHBOR_IP
     #log_message "Control Signal IP set to: ${TARGET_IP}" DEBUG
+}
+
+# Function to ping the other node (for verification)
+check_neighbor() {
+    # Disabling output for a quiet check
+    #log_message "--- CONNECTIVITY VERIFICATION ---" INFO
+
+    # Ensure peer variables are defined
+    if [ -z "$NEIGHBOR_IP" ]; then
+        get_signal_ip
+    fi
+
+    #log_message "Attempting to ping neighbor node ($NEIGHBOR_NODE at $NEIGHBOR_IP)..." INFO
+
+    ping -c 3 "$NEIGHBOR_IP" >/dev/null
+
+    if [ $? -eq 0 ]; then
+        #log_message "SUCCESS: Connectivity verified with $NEIGHBOR_NODE." INFO
+        return 0
+    else
+        #log_message "FAILURE: Could not ping $NEIGHBOR_NODE. Check network and IP settings on both devices." ERROR
+        return 1
+    fi
 }
 
 # --- Core Setup Functions ---
@@ -83,7 +107,7 @@ set_hostname() {
 
     select HOSTNAME_CHOICE in "${NODES[@]}"; do
         if [[ " ${NODES[@]} " =~ " ${HOSTNAME_CHOICE} " ]]; then
-            TARGET_HOSTNAME="$HOSTNAME_CHOICE"
+            TARGET_NODE="$HOSTNAME_CHOICE"
             break
         else
             log_message "Invalid selection. Please try again." WARNING
@@ -91,8 +115,8 @@ set_hostname() {
     done
 
     # Apply hostname using nmcli (PERSISTENT WRITE)
-    log_message "Applying hostname to $TARGET_HOSTNAME..." INFO
-    sudo nmcli general hostname "$TARGET_HOSTNAME" >/dev/null
+    log_message "Applying hostname to $TARGET_NODE..." INFO
+    sudo nmcli general hostname "$TARGET_NODE" >/dev/null
     if [ $? -ne 0 ]; then
         log_message "Error setting hostname with nmcli." ERROR
         return 1
@@ -100,7 +124,7 @@ set_hostname() {
         log_message "Hostname set successfully. (Requires reboot to finalize.)" INFO
     fi
 
-    export TARGET_HOSTNAME
+    export TARGET_NODE
 }
 
 # Function to connect to WiFi and set static IP
@@ -169,30 +193,10 @@ configure_wifi() {
     fi
 }
 
-# Function to ping the other node (for verification)
-verify_connectivity() {
-    log_message "--- CONNECTIVITY VERIFICATION ---" INFO
-
-    # Ensure peer variables are defined
-    if [ -z "$DEST_IP" ]; then
-        get_signal_ip
-    fi
-
-    log_message "Attempting to ping opposite node ($DEST_NODE at $DEST_IP)..." INFO
-
-    ping -c 3 "$DEST_IP"
-
-    if [ $? -eq 0 ]; then
-        log_message "SUCCESS: Connectivity verified with $DEST_NODE." INFO
-    else
-        log_message "FAILURE: Could not ping $DEST_NODE. Check network and IP settings on both devices." ERROR
-    fi
-}
-
 # Function to print final configuration summary
 final_summary() {
     log_message "=======================================================" INFO
-    log_message "SETUP COMPLETE: $TARGET_HOSTNAME" INFO
+    log_message "SETUP COMPLETE: $TARGET_NODE" INFO
     log_message "=======================================================" INFO
 
     # Check current Wi-Fi SSID
@@ -208,7 +212,7 @@ final_summary() {
     # Get all assigned IP4 addresses
     IP_ADDRS=$(nmcli -g ip4.address connection show $CONN_NAME)
 
-    printf "%-25s %s\n" "Hostname:" "$TARGET_HOSTNAME"
+    printf "%-25s %s\n" "Hostname:" "$TARGET_NODE"
     printf "%s\n" "-------------------------------------------------------"
     #printf "%-25s %s\n" "DHCP Assigned IP (Primary):" "$DHCP_IP"
     #printf "%-25s %s\n" "Static Control IP (Signal):" "$STATIC_IP_CLEAN"
@@ -217,6 +221,33 @@ final_summary() {
 
     log_message "=======================================================" INFO
     log_message "Please reboot the system now to finalize the hostname change: sudo reboot" INFO
+}
+
+# Function to generate SSH keys for GitHub access.
+generate_ssh_key() {
+    log_message "--- GENERATING SSH KEY ---" INFO
+    local ssh_file="$HOME/.ssh/id_ed25519"
+
+    # Ensure the .ssh directory exists
+    mkdir -p ~/.ssh
+
+    # Quietly generate SSH key with no passphrase for automation.
+    ssh-keygen -q -t ed25519 -f "$ssh_file" -C "$TARGET_NODE" -N ""
+
+    log_message "Action Required" DEBUG
+    log_message "Add the following public key as a 'Deploy Key' to the GitHub repository:"
+    echo
+    cat "${ssh_file}.pub"
+    echo
+
+    #check_neighbor
+    PUB_KEY=$(cat "${ssh_file}.pub")
+
+    # Attempt to copy the public key to our neighbor. BatchMode won't prompt for a password.
+    #ssh -o BatchMode=yes -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
+    ssh -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
+        echo '$PUB_KEY' >> ~/.ssh/authorized_keys && \
+        chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" 2>/dev/null
 }
 
 # --- Service Deployment Functions ---
@@ -228,7 +259,7 @@ install_project_files() {
     # Create target directory and copy all files
     sudo mkdir -p "$INSTALL_DIR"
 
-    # Assumes the script is run from the /src directory or its parent, 
+    # Assumes the script is run from the /src directory, 
     # and /src contains all the python scripts.
     SCRIPT_DIR=$(dirname "$0")
     log_message "Copying files from '$SCRIPT_DIR' to '$INSTALL_DIR'." DEBUG
@@ -281,7 +312,7 @@ EOF
 
 # Function to setup the fan controller service (Alpha Node ONLY)
 setup_fan_controller_service() {
-    if [ "$TARGET_HOSTNAME" != "alpha" ]; then
+    if [ "$TARGET_NODE" != "alpha" ]; then
         log_message "Skipping fan controller setup: Not the alpha node." INFO
         return 0
     fi
@@ -334,7 +365,7 @@ ALL_FUNCTIONS=(
     setup_network_led_service
     setup_fan_controller_service
     configure_wifi
-    verify_connectivity
+    check_neighbor
     final_summary
 )
 FUNC_TO_RUN=""
@@ -344,8 +375,17 @@ while getopts "f:p" opt; do
         f)
             FUNC_TO_RUN="$OPTARG"
             ;;
+        g)
+            # Git Clone
+            ;;
+        k)
+            # SSH keys
+            ;;
         p)
             ALL_FUNCTIONS=(install_project_files setup_network_led_service setup_fan_controller_service)
+            ;;
+        s)
+            # Deploy services
             ;;
         \?)
             echo "Invalid option: -${OPTARG}" >&2
@@ -365,7 +405,7 @@ done
 # This ensures host variables are set if running a subsequent function
 CURR_NAME=$(nmcli general hostname)
 if [[ "${NODES[@]}" =~ "${CURR_NAME}" ]]; then
-    TARGET_HOSTNAME="${CURR_NAME}"
+    TARGET_NODE="${CURR_NAME}"
 else
     set_hostname
 fi
@@ -385,7 +425,7 @@ if [ ! -z "$FUNC_TO_RUN" ]; then
     fi
 else
     # Run full sequence
-    log_message "No argument provided. Running full setup sequence."
+    #log_message "No argument provided. Running full setup sequence."
 
     for func in "${ALL_FUNCTIONS[@]}"; do
         # Execute the function

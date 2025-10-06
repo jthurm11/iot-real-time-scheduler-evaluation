@@ -23,6 +23,6 @@ This subdirectory contains all code intended to run on the **Sensor/Controller N
     * `sensor_read.py` _(name TBD)_: Code to interface with the ultrasonic depth sensor.
     * Networking scripts for sending control signals and logging data.
 
-## 3. shared_libs/ (Optional)
+## 3. common/ (Optional)
 
 This directory is reserved for any common utilities, helper functions, or libraries (e.g., custom logging functions) that are used by code on **both** the `alpha` and `beta` nodes.
