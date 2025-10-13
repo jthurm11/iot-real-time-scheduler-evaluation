@@ -1,0 +1,15 @@
+[Unit]
+Description=Fan Controller Base Script
+After=multi-user.target
+
+# The placeholder names within '@' get replaced during 'setup_nodes.sh'.
+[Service]
+ExecStart=/usr/bin/env python3 @@INSTALL_DIR@@/alpha/fan_controller.py
+WorkingDirectory=@@INSTALL_DIR@@/alpha
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=@@SERVICE_USER@@
+
+[Install]
+WantedBy=multi-user.target
