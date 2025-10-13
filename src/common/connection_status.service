@@ -1,0 +1,15 @@
+[Unit]
+Description=Network Connection Status LED Monitor
+After=network.target
+
+# The placeholder names within '@' get replaced during 'setup_nodes.sh'.
+[Service]
+ExecStart=/usr/bin/env python3 @@INSTALL_DIR@@/common/connection_status_led.py
+WorkingDirectory=@@INSTALL_DIR@@/common
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=@@SERVICE_USER@@
+
+[Install]
+WantedBy=multi-user.target
