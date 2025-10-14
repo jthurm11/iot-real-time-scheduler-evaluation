@@ -162,12 +162,12 @@ configure_signal_ip() {
         export CONN_NAME
 
         # There doesn't appear to be any negative effects to re-adding the IP address if
-        # the connection profile already has it registered. So, removing most of this logic
-        # to make things more efficient. 
-        #nmcli -g ip4.address connection show "$CONN_NAME" | grep "$TARGET_IP" >/dev/null
-        #if [ $? -eq 0 ]; then
-        #    log_message ${func} "Signal IP already assigned." INFO
-        #else
+        # the connection profile already has it registered. So, could remove most of
+        # this logic to make things more efficient.
+        nmcli -g ip4.address connection show "$CONN_NAME" | grep "$TARGET_IP" >/dev/null
+        if [ $? -eq 0 ]; then
+            log_message ${func} "Signal IP already assigned." INFO
+        else
             # /28 = .1 - .14
             sudo nmcli connection modify "$CONN_NAME" +ipv4.addresses "$TARGET_IP/28"
             if [ $? -ne 0 ]; then
@@ -179,7 +179,7 @@ configure_signal_ip() {
                 log_message ${func} "Signal IP added and activated." INFO
                 return 0
             fi
-        #fi
+        fi
     else
         log_message ${func} "Could not determine Wi-Fi connection." ERROR
         return 1
@@ -243,7 +243,7 @@ generate_ssh_key() {
 
     # Attempt to copy the public key to our neighbor. BatchMode won't prompt for a password.
     #ssh -o BatchMode=yes -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
-    ssh -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
+    ssh -o ConnectTimeout=5 "$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
         echo \"$pub_key\" >> ~/.ssh/authorized_keys && \
         chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" 2>/dev/null
 
@@ -274,10 +274,10 @@ install_project() {
     sudo cp -r "$SCRIPT_DIR"/{common,$TARGET_NODE} "$INSTALL_DIR"/
 
     # Set proper ownership and permissions
-    # CURR_USER="$(id -un)"
-    # if [[ "$SERVICE_USER" != "$CURR_USER" ]]; then
-    #     SERVICE_USER="$CURR_USER"
-    # fi
+    CURR_USER="$(id -un)"
+    if [[ "$SERVICE_USER" != "$CURR_USER" ]]; then
+        SERVICE_USER="$CURR_USER"
+    fi
     sudo chown -R $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR"
     sudo find "$INSTALL_DIR" -type f -name "*.py" -exec chmod +x {} \;
 
@@ -290,9 +290,10 @@ install_project() {
         local SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
         local SCRIPT_PATH="$INSTALL_DIR/$SERVICE_NAME"
 
-        sudo sed -e "s/@@INSTALL_DIR@@/$INSTALL_DIR/g" \
-            -e "s/@@SERVICE_USER@@/$SERVICE_USER/" \
-            | sudo tee $SERVICE_PATH >/dev/null
+        # Expression #1 uses '#' delimiters due to file path expansion. 
+        sudo sed -e "s#@@INSTALL_DIR@@#$INSTALL_DIR#g" \
+            -e "s/@@SERVICE_USER@@/$SERVICE_USER/g" \
+            ${service_file} | sudo tee $SERVICE_PATH >/dev/null
 
         # Add name of service to array, to enable in next step.
         installed_services+=("$SERVICE_NAME")
