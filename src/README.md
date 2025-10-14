@@ -1,11 +1,9 @@
 # src
 
-This directory contains all the **active, working source code** for the IoT-RTS Evaluation Project. This code has been developed and/or modified by the project team. 
+This directory contains all the **active, working source code** for the IoT-RTS Evaluation Project. This code has been developed and/or modified by the project team. It is organized by the two main nodes in the testbed.  
 
 > [!TIP] 
-> See the [Getting Started](#getting_started) 
-
-It is organized by the two main nodes in the testbed:
+> See the [Getting Started](#getting-started) section below to start using this code. 
 
 ## 1. alpha/ (Actuator Node)
 
@@ -52,7 +50,7 @@ sudo apt update && sudo apt install git -y
 2. Create Repository Directory:
 The `setup_nodes.sh` script expects the repository to be cloned locally.  
 > [!IMPORTANT] 
-> Only the `install_project` function will truly fail, the rest of the script should complete without issue. Still, it's recommended to clone the entire repo instead of just downloading/executing `setup_nodes.sh` by itself.  
+> If only the `setup_nodes.sh` script is downloaded and executed, the `install_project` function will fail, but the rest of the script should complete without issue. Still, it's recommended to clone the entire repo instead of just downloading/executing `setup_nodes.sh` by itself.  
 ```bash 
 mkdir -p ~/Public && cd ~/Public 
 ```
@@ -75,7 +73,8 @@ cd ~/Public/iot-real-time-scheduler-evaluation/src
 * Action: The script will first ask you to select a hostname for the node. 
 * Action: It will configure your static control network IP address. 
 * Action: It will generate an SSH key and display it for you to add as a Deploy Key on the GitHub repository. 
-    > NOTE: This is no longer necessary, as the repository is now public. 
+    > [!NOTE]
+    > This is no longer necessary, as the repository is now public. 
 * Action: It will install project files and enable the corresponding system services. 
 
 2. Reboot to Finalize Hostname: 
