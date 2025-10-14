@@ -116,6 +116,7 @@ who_am_i() {
 }
 
 # Function to display usage instructions
+# NOTE: This function should be updated if changes/additions are made. 
 show_usage() {
     local func="show_usage"
     log_message ${func} "--- SCRIPT USAGE ---" INFO
@@ -183,6 +184,9 @@ configure_signal_ip() {
         log_message ${func} "Could not determine Wi-Fi connection." ERROR
         return 1
     fi
+
+    # Shouldn't get here
+    return
 }
 
 # Function to print final configuration summary
@@ -234,7 +238,7 @@ generate_ssh_key() {
     log_message ${func} "Action Required" DEBUG
     log_message ${func} "Add the following public key as a 'Deploy Key' to the GitHub repository:"
     echo
-    echo '$pub_key'
+    echo "$pub_key"
     echo
 
     # Attempt to copy the public key to our neighbor. BatchMode won't prompt for a password.
@@ -246,6 +250,7 @@ generate_ssh_key() {
     if [ $? -ne 0 ]; then
         log_message ${func} "Error installing SSH keys to neighbor" WARNING
     fi
+    return 0
 }
 
 # --- Service Deployment Functions ---
@@ -303,6 +308,7 @@ install_project() {
     done
     unset installed_services
     log_message ${func} "Project services installed and creation attempted." 
+    return 0
 }
 
 # --- MAIN EXECUTION LOGIC ---
@@ -358,6 +364,7 @@ else
     # The full sequence is now explicitly defined here:
     configure_signal_ip || { log_message ${func} "Setup aborted due to function failure: configure_signal_ip" WARNING; exit 1; }
     check_neighbor || { log_message ${func} "Neighbor could not be reached: check_neighbor" WARNING; }
+    generate_ssh_key || { log_message ${func} "Setup aborted due to function failure: generate_ssh_key" WARNING; exit 1; }
     install_project #|| { log_message ${func} "Setup aborted due to function failure: install_project" WARNING; exit 1; }
     final_summary
 fi
