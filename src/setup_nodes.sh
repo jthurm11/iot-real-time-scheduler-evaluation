@@ -243,7 +243,7 @@ generate_ssh_key() {
 
     # Attempt to copy the public key to our neighbor. BatchMode won't prompt for a password.
     #ssh -o BatchMode=yes -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
-    ssh -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
+    ssh -o ConnectTimeout=5 "$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
         echo \"$pub_key\" >> ~/.ssh/authorized_keys && \
         chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" 2>/dev/null
 
