@@ -1,78 +1,92 @@
-import socket
-import time
-import random
-import RPi.GPIO as GPIO
+#!/usr/bin/env python3
+from gpiozero.pins.pigpio import PiGPIOFactory
+from gpiozero import DistanceSensor
+from pid_controller import PID
+import socket, time, matplotlib.pyplot as plt
 
 
-# Configuration
-HOST = ''       # Listen on all available interfaces
-PORT = 5000     # Must match controller port
-SAMPLE_TIME = 0.1  # seconds (100 ms)
+# CONFIGURATION
+FAN_IP = "192.168.50.139"   # IP of the fan Pi
+FAN_PORT = 5005
+SETPOINT = 20.0              # Desired height (cm)
+SAMPLE_TIME = 0.1            # Control interval (s)
 
-# GPIO Setup
-GPIO.setwarnings(False)
-GPIO.setmode(GPIO.BCM)
-TRIG_PIN = 23
-ECHO_PIN = 24
-
-GPIO.setup(TRIG_PIN, GPIO.OUT)
-GPIO.setup(ECHO_PIN, GPIO.IN)
-
-time.sleep(2)
-
-def read_distance():
-    GPIO.output(TRIG_PIN, GPIO.LOW)
-    time.sleep(0.000002)
-    GPIO.output(TRIG_PIN, GPIO.HIGH)
-    time.sleep(0.00001)
-    GPIO.output(TRIG_PIN, GPIO.LOW)
-
-    pulse_start = time.time()
-    pulse_end = time.time()
-
-    timeout = time.time() + 0.04  # 40 ms max waiting for echo to start
-    while GPIO.input(ECHO_PIN) == 0 and time.time() < timeout:
-        pulse_start = time.time()
-
-    timeout = time.time() + 0.04  # 40 ms max waiting for echo to end
-    while GPIO.input(ECHO_PIN) == 1 and time.time() < timeout:
-        pulse_end = time.time()
-
-    pulse_len = pulse_end - pulse_start
-    dist = pulse_len * 17150  # distance in cm
-
-    # Filter out invalid ranges
-    if dist < 2 or dist > 400:
-        return None
-    return round(dist, 2)
+# PID tuning parameters — adjust as needed
+pid = PID(Kp=0.05, Ki=0.05, Kd=0.002, setpoint=SETPOINT, sample_time=SAMPLE_TIME, output_limits=(0, 100))
 
 
-# Start Server
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind((HOST, PORT))
-s.listen(1)
-print(f"[Sensor] Waiting for fan controller to connect on port {PORT}...")
-
-conn, addr = s.accept()
-print(f"[Sensor] Connected to fan controller at {addr}")
+# SENSOR SETUP (pigpio)
+DistanceSensor.pin_factory = PiGPIOFactory()
+sensor = DistanceSensor(echo=24, trigger=23, max_distance=5)
 
 
-# Main loop
+# UDP SETUP
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+print(f"[Sensor] PID control started. Sending to {FAN_IP}:{FAN_PORT}")
+
+
+# LOGGING SETUP
+t_log, h_log, sp_log, out_log, err_log = [], [], [], [], []
+start = time.time()
+
+
+# MAIN CONTROL LOOP
 try:
     while True:
-        distance = read_distance()
+        # Measure current distance (m → cm)
+        distance_cm = sensor.distance * 100.0
 
-        # If the sensor failed, skip this iteration
-        if distance is None:
-            continue
+        # Compute new control output from PID
+        output = pid.compute(distance_cm)
 
-        print(f"[Sensor] Sent {distance:.2f} cm")
+        # Send duty cycle command to fan Pi
+        sock.sendto(f"{output:.2f}".encode(), (FAN_IP, FAN_PORT))
+
+        # Log data
+        now = time.time() - start
+        error = pid.setpoint - distance_cm
+        t_log.append(now)
+        h_log.append(distance_cm)
+        sp_log.append(pid.setpoint)
+        out_log.append(output)
+        err_log.append(error)
+
+        # Print live status
+        print(f"[Sensor] t={now:5.2f}s | h={distance_cm:5.2f} cm | out={output:6.2f}% | err={error:6.2f}")
+
+        # Wait for next sample
         time.sleep(SAMPLE_TIME)
 
 except KeyboardInterrupt:
-    print("\n[Sensor] Stopped by user")
-
+    print("\n[Sensor] Experiment ended manually.")
 finally:
-    conn.close()
-    s.close()
-    GPIO.cleanup()
+    sock.close()
+    print("[Sensor] Cleaning up and plotting results...")
+
+
+    # PLOTTING
+    plt.figure(figsize=(10, 8))
+
+    # Height vs Setpoint
+    plt.subplot(3, 1, 1)
+    plt.plot(t_log, h_log, label="Measured Height h(t)", color='blue')
+    plt.plot(t_log, sp_log, '--', label="Setpoint hSP(t)", color='red')
+    plt.ylabel("Height (cm)")
+    plt.legend(loc='upper right')
+
+    # PID Output (Fan %)
+    plt.subplot(3, 1, 2)
+    plt.plot(t_log, out_log, label="Fan Output (PID %)", color='green')
+    plt.ylabel("PWM Output (%)")
+    plt.legend(loc='upper right')
+
+    # Error vs Time
+    plt.subplot(3, 1, 3)
+    plt.plot(t_log, err_log, label="Error e(t) = hSP - h", color='purple')
+    plt.xlabel("Time (s)")
+    plt.ylabel("Error (cm)")
+    plt.legend(loc='upper right')
+
+    plt.suptitle("Distributed Ping-Pong Ball PID Response (Sensor → Fan over UDP)", fontsize=14)
+    plt.tight_layout()
+    plt.show()

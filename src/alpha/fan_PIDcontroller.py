@@ -1,87 +1,59 @@
-import socket, time, matplotlib.pyplot as plt
-from pid_controller import PID
+#!/usr/bin/env python3
 import RPi.GPIO as GPIO
+import socket
+import select
+import time
 
+# CONFIGURATION
+PWM_PIN = 18           # GPIO18 (Physical Pin 12)
+PWM_FREQ = 25000       # 25 kHz for 4-pin PWM fans
+UDP_IP = "0.0.0.0"     # Listen on all interfaces
+UDP_PORT = 5005
+TIMEOUT = 0.01         # select() timeout
+BUFFER_SIZE = 1024
 
-# Setup
-FAN_PIN = 18
+# SETUP GPIO + PWM
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(FAN_PIN, GPIO.OUT)
-pwm = GPIO.PWM(FAN_PIN, 1000)
+GPIO.setup(PWM_PIN, GPIO.OUT)
+pwm = GPIO.PWM(PWM_PIN, PWM_FREQ)
 pwm.start(0)
 
-# Connect with sensor pi
-HOST = '192.168.50.234'   # Sensor Pi IP
-PORT = 5000
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect((HOST, PORT))
-s_file = s.makefile('r')
-
-# initialize PID values
-pid = PID(Kp=0.05, Ki=0.05, Kd=0.002, setpoint=20.0, sample_time=0.1, output_limits=(0, 100))
-
-# Create data logs
-time_log, height_log, setpoint_log, out_log, err_log = [], [], [], [], []
-start = time.time()
-
-print("Connected. Running control loop...")
+print(f"[Fan] PWM ready on GPIO{PWM_PIN} ({PWM_FREQ} Hz)")
+print(f"[Fan] Listening for UDP control on port {UDP_PORT}")
 
 
-
-# Main loop
-for i in range(300):  # Run for about 30 seconds (300 * 0.1s)
-    line = s_file.readline().strip()    # Receive data from sensor Pi
-    if not line:
-        continue
-
-    try:
-        height = float(line)            # Parse height value
-        output = pid.compute(height)    # Run PID control
-        pwm.ChangeDutyCycle(output)     # Send output to fan
-    except ValueError:
-        continue
-
-    # Record values
-    now = time.time() - start
-    error = pid.setpoint - height
-    time_log.append(now)
-    height_log.append(height)
-    setpoint_log.append(pid.setpoint)
-    out_log.append(output)
-    err_log.append(error)
-
-    print(f"{now:5.2f}s | h={height:5.2f} | out={output:6.2f} | err={error:6.2f}")
-    time.sleep(pid.sample_time)
+# UDP SOCKET SETUP
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind((UDP_IP, UDP_PORT))
+sock.setblocking(0)
 
 
+# MAIN LOOP
+current_duty = -1
+try:
+    while True:
+        ready = select.select([sock], [], [], TIMEOUT)
+        if ready[0]:
+            try:
+                data, addr = sock.recvfrom(BUFFER_SIZE)
+                duty = float(data.decode().strip())
+                duty = max(0, min(100, duty))  # clamp
 
-# Cleanup & plotting
-pwm.stop()
-GPIO.cleanup()
-s.close()
+                if duty != current_duty:
+                    pwm.ChangeDutyCycle(duty)
+                    current_duty = duty
+                    print(f"[Fan] Duty = {duty:5.1f}% from {addr[0]}")
 
-plt.figure(figsize=(10, 8))
-
-# --- Figure 1: Height vs Time ---
-plt.subplot(3, 1, 1)
-plt.plot(time_log, height_log, label="Measured height h(t)", color='blue')
-plt.plot(time_log, setpoint_log, '--', label="Setpoint hSP(t)", color='red')
-plt.ylabel("Height (cm)")
-plt.legend(loc='upper right')
-
-# --- Figure 2: Output (fan voltage/PWM) ---
-plt.subplot(3, 1, 2)
-plt.plot(time_log, out_log, label="Fan Output V(t)", color='green')
-plt.ylabel("Output (PWM %)")
-plt.legend(loc='upper right')
-
-# --- Figure 3: Error vs Time ---
-plt.subplot(3, 1, 3)
-plt.plot(time_log, err_log, label="Error e(t) = hSP - h", color='purple')
-plt.xlabel("Time (s)")
-plt.ylabel("Error (cm)")
-plt.legend(loc='upper right')
-
-plt.suptitle("PingPongPID Response Data (Python Implementation)", fontsize=14)
-plt.tight_layout()
-plt.show()
+            except ValueError:
+                print("[Fan] Invalid data received.")
+            except Exception as e:
+                print(f"[Fan] Error: {e}")
+        else:
+            pass  # no packet; maintain last duty
+except KeyboardInterrupt:
+    print("\n[Fan] Stopped manually.")
+finally:
+    pwm.stop()
+    GPIO.cleanup()
+    sock.close()
+    print("[Fan] Clean exit.")
