@@ -72,9 +72,9 @@ cd ~/Public/iot-real-time-scheduler-evaluation/src
 
 * Action: The script will first ask you to select a hostname for the node. 
 * Action: It will configure your static control network IP address. 
-* Action: It will generate an SSH key and display it for you to add as a Deploy Key on the GitHub repository. 
-    > [!NOTE]
-    > This is no longer necessary, as the repository is now public. 
+* Action: It will generate an SSH key and display it for you to add as a Deploy Key on the GitHub repository.
+> [!NOTE] 
+> Using SSH-Deploy-Keys is no longer necessary, as the repository is now public. 
 * Action: It will install project files and enable the corresponding system services. 
 
 2. Reboot to Finalize Hostname: 
