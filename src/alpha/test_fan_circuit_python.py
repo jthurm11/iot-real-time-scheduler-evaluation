@@ -5,24 +5,70 @@
 import time
 import board
 import busio
+import sys # Added for system exit
+import os  # Added for file operations
+
 try:
     # We must import from emc2101_lut to access advanced PWM configuration methods.
     from adafruit_emc2101.emc2101_lut import EMC2101_LUT as EMC2101 
 except ImportError:
     print("Error: The 'adafruit-circuitpython-emc2101' library is not installed.")
     print("Please run: sudo pip3 install adafruit-circuitpython-emc2101")
-    exit()
+    sys.exit(1) # Corrected to use sys.exit(1) for consistent error handling
 
 # --- Configuration ---
 # The default I2C address for EMC2101 is 0x4C, which is handled by the library.
 FAN_SPEEDS = [0, 25, 50, 75, 100] # Duty cycle percentages to test
 CYCLE_DELAY = 1.5 # Time (seconds) to hold each speed
 
+# Revision prefixes for Raspberry Pi 4 / Compute Module 4 (BCM2711 based)
+# If any of these are detected, the script will exit.
+# We're only running this script on Jake's test lab, which has Pi 3 / Pi Zero HW. 
+CM4_REVISION_PREFIXES = ["a031", "b031", "c031", "d031"] 
+
+
+def get_pi_revision():
+    """Reads the hardware revision from /proc/cpuinfo."""
+    if not os.path.exists('/proc/cpuinfo'):
+        return None 
+    
+    with open('/proc/cpuinfo', 'r') as f:
+        for line in f:
+            if line.startswith('Revision'):
+                # Extracts the revision code (e.g., '0000a020d3')
+                return line.split(':')[-1].strip()
+    return None
+
+def check_board_type():
+    """Checks if the board is an excluded type (CM4) and exits if true."""
+    revision = get_pi_revision()
+    
+    if revision is None:
+        # If /proc/cpuinfo is missing (e.g., running on non-Linux or weird setup)
+        print("Warning: Could not determine hardware revision. Proceeding with caution.")
+        return
+        
+    # Check against CM4 prefixes (first 4 characters of the revision code)
+    if revision[:4] in CM4_REVISION_PREFIXES:
+        print("\n--- HARDWARE CHECK FAILED ---")
+        print(f"Detected Pi 4/CM4 Architecture (Revision prefix: {revision[:4]}).")
+        print("This script is configured to only run on Pi 3B or Pi Zero.")
+        print("Exiting script to prevent hardware conflict.")
+        print("-----------------------------\n")
+        sys.exit(1)
+    else:
+        # Assumes any non-CM4 architecture is a Pi 3 or Pi Zero (e.g., 9000c1, a02082)
+        print(f"Hardware Check OK: Revision {revision} detected. Compatible board found.")
+
+
 def main():
     """
     Initializes the EMC2101, sets the PWM frequency for stable fan control, 
     and cycles the fan through various speeds.
     """
+    
+    # 0. Hardware Check (NEW STEP)
+    check_board_type()
     
     # 1. Initialize I2C connection
     try:
