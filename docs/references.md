@@ -18,3 +18,7 @@
 1. An example of how linux traffic scheduler improves control under traffic congestion:
     - https://github.com/NXP/dds-tsn
   
+### Potentiometers
+1. Raspberry Pi Tutorial: How to use a potentiometer. Ardumotive Arduino Greek Playground. Retrieved from [ardumotive.com](https://www.ardumotive.com/how-to-use-a-potentiometeren.html)
+2. Circuit Basics: Using Potentiometers with the Raspberry Pi. Retrieved from [circuitbasics.com](https://www.circuitbasics.com/using-potentiometers-with-raspberry-pi/).
+
