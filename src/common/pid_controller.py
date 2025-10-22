@@ -4,13 +4,15 @@ import time
 
 class PID:
     def __init__(self, Kp, Ki, Kd, setpoint=0.0, sample_time=0.1, output_limits=(0,255), controller_direction='DIRECT'):
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
         self.setpoint = setpoint
         self.sample_time = sample_time
         self.output_limits = output_limits
         self.controller_direction = controller_direction
+
+        # JT: Changed to scale Ki by sample_time and Kd by (1/sample_time) during init
+        self.Kp = Kp
+        self.Ki = Ki * sample_time
+        self.Kd = Kd / sample_time
 
         #keep track of state
         self._last_time = time.time()
@@ -51,7 +53,9 @@ class PID:
             # Store state
             self._last_input = input_val
             self._last_time = now
+            return self.output
 
+        # If not enough time has passed, return last calculated output
         return self.output
     
 
