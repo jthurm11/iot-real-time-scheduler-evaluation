@@ -67,7 +67,7 @@ The `setup_nodes.sh` script will guide you through setting the hostname (`alpha`
 1. Execute the Full Setup: 
 ```bash 
 cd ~/Public/iot-real-time-scheduler-evaluation/src 
-./setup_nodes.sh
+bash ./setup_nodes.sh
 ``` 
 
 * Action: The script will first ask you to select a hostname for the node. 
@@ -94,7 +94,7 @@ git pull
 2. If you added new services, modified unit files, or need to ensure fresh copies of scripts are installed, run the install_project function again. 
 
 ```bash
-./setup_nodes.sh -f install_project 
+bash ./setup_nodes.sh -f install_project 
 ```
 
 > [!IMPORTANT] 
