@@ -312,6 +312,11 @@ install_project() {
         fi
     done
     unset installed_services
+
+    # Handle python additives/dependencies
+    sudo apt install python3-matplotlib pigpiod
+    sudo systemctl enable --now pigpiod
+
     log_message ${func} "Project services installed and creation attempted." 
     return 0
 }
