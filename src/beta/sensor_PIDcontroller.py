@@ -12,8 +12,16 @@ SETPOINT = 20.0              # Desired height (cm)
 SAMPLE_TIME = 0.1            # Control interval (s)
 
 # PID tuning parameters — adjust as needed
-pid = PID(Kp=0.05, Ki=0.05, Kd=0.002, setpoint=SETPOINT, sample_time=SAMPLE_TIME, output_limits=(0, 100))
-
+# JT: Set controller_direction='REVERSE' for the ball-on-top setup ***
+pid = PID(
+    Kp=0.05, 
+    Ki=0.05, 
+    Kd=0.002, 
+    setpoint=SETPOINT, 
+    sample_time=SAMPLE_TIME, 
+    output_limits=(0, 100),
+    controller_direction='REVERSE'
+)
 
 # SENSOR SETUP (pigpio)
 DistanceSensor.pin_factory = PiGPIOFactory()
