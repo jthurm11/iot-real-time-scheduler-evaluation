@@ -298,6 +298,10 @@ install_project() {
         # Add name of service to array, to enable in next step.
         installed_services+=("$SERVICE_NAME")
     done
+
+    # Change placeholder pingserver to neighbor node
+    sed -i "s/google.com/$NEIGHBOR_IP/g" $INSTALL_DIR/common/connection_status_led.py
+
     sudo systemctl daemon-reload
     for service in ${installed_services[@]}; do
         sudo systemctl enable --quiet --now "$service"
