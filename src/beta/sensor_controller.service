@@ -1,11 +1,11 @@
 [Unit]
-Description=Fan PID Controller Script
+Description=Sensor PID Controller Script
 After=multi-user.target
 
 # The placeholder names within '@' get replaced during 'setup_nodes.sh'.
 [Service]
-ExecStart=/usr/bin/env python3 @@INSTALL_DIR@@/alpha/fan_PIDcontroller.py
-WorkingDirectory=@@INSTALL_DIR@@/alpha
+ExecStart=/usr/bin/env python3 @@INSTALL_DIR@@/beta/sensor_PIDcontroller.py
+WorkingDirectory=@@INSTALL_DIR@@/beta
 StandardOutput=journal
 StandardError=journal
 Restart=always

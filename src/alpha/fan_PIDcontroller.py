@@ -6,7 +6,10 @@ import time
 
 # CONFIGURATION
 PWM_PIN = 18           # GPIO18 (Physical Pin 12)
-PWM_FREQ = 25000       # 25 kHz for 4-pin PWM fans
+
+# JT: Changed to 10k, as nothing above seemed to work.
+PWM_FREQ = 10000       # 25 kHz for 4-pin PWM fans
+
 UDP_IP = "0.0.0.0"     # Listen on all interfaces
 UDP_PORT = 5005
 TIMEOUT = 0.01         # select() timeout
