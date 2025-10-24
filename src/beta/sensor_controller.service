@@ -1,6 +1,7 @@
 [Unit]
 Description=Sensor PID Controller Script
-After=multi-user.target
+After=multi-user.target pigpiod.service
+Requires=pigpiod.service
 
 # The placeholder names within '@' get replaced during 'setup_nodes.sh'.
 [Service]

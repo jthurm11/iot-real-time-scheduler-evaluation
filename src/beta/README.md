@@ -15,4 +15,6 @@ This subdirectory contains all code intended to run on the **Sensor/Controller N
 
 For this project, our particular wiring arrangement and resistance values are found in the [docs](/docs/) folder. 
 
-[Example sensor wiring](/pics/circuit_sensor.png) 
+Below is an example of the required wiring circuit for this system.  
+
+![Example sensor wiring](/pics/circuit_sensor.png) 
