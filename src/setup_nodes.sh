@@ -312,6 +312,24 @@ install_project() {
         fi
     done
     unset installed_services
+
+    # Handle python additives/dependencies
+    sudo apt install python3-matplotlib pigpiod
+    sudo systemctl enable --now pigpiod
+
+    # Needed so that $SCRIPT_DIR/{alpha,beta}/<scripts.py> can import common modules.
+    export PYTHONPATH="${SCRIPT_DIR}/common:$PYTHONPATH"
+
+    # Install dependencies and enable the I2C bus for the fan controller (i2c-10 on CM4)
+    sudo apt install i2c-tools
+    if [[ $(grep -i "i2c_vc" /boot/firmware/config.txt) ]]; then
+        # Try to uncomment whatever is defined
+        sudo sed -i '/i2c_vc/s/^#//' /boot/firmware/config.txt
+    else
+        # Add the line
+        sudo sed -i '$a\dtparam=i2c_vc=on' /boot/firmware/config.txt
+    fi
+
     log_message ${func} "Project services installed and creation attempted." 
     return 0
 }
