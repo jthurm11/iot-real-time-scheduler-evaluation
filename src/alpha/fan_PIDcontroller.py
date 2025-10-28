@@ -1,77 +1,76 @@
 #!/usr/bin/env python3
-# REPLACED RPi.GPIO WITH SMBUS2 FOR EMC2301/EMC2101 CONTROL
+# DUAL-MODE FAN CONTROLLER: Prioritizes CircuitPython (Pi 3B) then falls back to SMBus (CM4/Generic)
+# Includes data logging and plotting functionality.
 
-import smbus2 
 import socket
 import select
 import time
 import math
+import sys
+import logging
+import numpy as np
+import matplotlib.pyplot as plt
 
-# --- FAN CONTROLLER CONFIGURATION ---
-# Prioritized list of (I2C_BUS_ID, I2C_ADDRESS, CONFIG_REGISTER) tuples:
-# 1. CM4 IO Board (Bus 10, EMC2301 at 0x2F, Config Register 0x3C) - High Priority
-# 2. Pi 3B + EMC2101 HAT (Bus 1, EMC2101 at 0x4C, Config Register 0x4C) - Fallback
-I2C_PRIORITY_COMBOS = [
-    (10, 0x2F, 0x3C),  # CM4 I/O Board setup
-    (1, 0x4C, 0x4C)    # Pi 3B/Legacy setup
-]
+# Set up logging for better error visibility
+logging.basicConfig(level=logging.INFO, format='[Fan] %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-# Shared Register Addresses (standard across EMC fan controllers)
-FAN_PWM_REG = 0x30            # Fan 1 PWM Duty Cycle Register
-TACH_HIGH_REG = 0x3E          # Fan 1 Tachometer Reading (High Byte)
-
-# Fan constant based on EMC2101/2301 datasheet (used for RPM calculation)
-TACH_DIVISOR = 0.5            # 0.5 assumes the default TACH_COUNT is 2 pulses/rev
-
-# Variables to be set during successful initialization
-bus = None
-i2c_address = None
-config_reg = None
-
+# --- CONFIGURATION ---
 UDP_IP = "0.0.0.0"            # Listen on all interfaces
 UDP_PORT = 5005
 TIMEOUT = 0.01
 BUFFER_SIZE = 1024
 
-# --- I2C SETUP WITH BUS/ADDRESS FALLBACK ---
-# Try to initialize the I2C bus by checking the prioritized combos
-for current_bus_id, current_i2c_addr, current_config_reg in I2C_PRIORITY_COMBOS:
+# --- I2C/SMBUS SPECIFIC CONFIGURATION ---
+I2C_PRIORITY_COMBOS = [
+    (10, 0x2F, 0x3C),  # CM4 I/O Board (EMC2301)
+    (1, 0x4C, 0x4C)    # Pi 3B/Legacy (EMC2101)
+]
+
+# Shared Register Addresses (standard across EMC fan controllers)
+FAN_PWM_REG = 0x30            # Fan 1 PWM Duty Cycle Register
+TACH_HIGH_REG = 0x3E          # Fan 1 Tachometer Reading (High Byte)
+TACH_DIVISOR = 0.5            # 0.5 assumes the default TACH_COUNT is 2 pulses/rev
+FAN_CONFIG_REG_EMC2101 = 0x4C # Address of the Fan Configuration Register for EMC2101
+FAN_CONFIG_REG_EMC2301 = 0x3C # Address of the Fan Configuration Register for EMC2301
+MANUAL_PWM_VALUE = 0x00       # Value that forces Manual PWM mode
+
+# --- GLOBAL HARDWARE STATE ---
+hardware_mode = 'UNKNOWN'
+active_bus_obj = None # Can be smbus2 object or CircuitPython EMC object
+i2c_address = None
+fan_config_reg = None
+
+# --- DYNAMICALLY ASSIGNED FUNCTIONS (Will be set during initialization) ---
+def set_pwm_duty(duty_percent):
+    logger.error("Hardware not initialized. Cannot set PWM duty.")
+    return -1
+
+def read_fan_rpm():
+    logger.error("Hardware not initialized. Cannot read fan RPM.")
+    return -1
+
+# --- SMBUS IMPLEMENTATION ---
+try:
+    import smbus2
+    SMBUS_AVAILABLE = True
+except ImportError:
+    SMBUS_AVAILABLE = False
+    logger.warning("smbus2 not found. SMBus functionality disabled.")
+
+def smbus_set_pwm_duty(bus, i2c_addr, duty_percent):
+    # Scale 0-100% duty cycle to 8-bit register value (0-255)
+    duty_byte = int(round(duty_percent * 2.55)) # 255/100 = 2.55
+    duty_byte = max(0x00, min(0xFF, duty_byte))
+
     try:
-        bus = smbus2.SMBus(current_bus_id)
-
-        # 1. Attempt read at the specific address to confirm chip presence (Product ID Register)
-        # If the chip is not present, this will throw an IOError or generic Exception
-        product_id = bus.read_byte_data(current_i2c_addr, 0xFD)
-
-        # 2. Configure the fan to Manual PWM Mode (write 0x00)
-        bus.write_byte_data(current_i2c_addr, current_config_reg, 0x00)
-
-        # Success! Set the final variables and exit the loop.
-        i2c_address = current_i2c_addr
-        config_reg = current_config_reg
-        print(f"[Fan] I2C Bus {current_bus_id} initialized successfully at address 0x{i2c_address:X} (Config Reg: 0x{config_reg:X}).")
-        break 
-
-    except FileNotFoundError:
-        # Bus not found (e.g., trying bus 10 on a Pi 3B without configuration)
-        print(f"[Fan] I2C Bus {current_bus_id} not found. Trying next combo...")
-        bus = None # Ensure bus is None for next attempt
+        bus.write_byte_data(i2c_addr, FAN_PWM_REG, duty_byte)
+        return 0
     except IOError as e:
-        # Chip not responding or other I/O error
-        print(f"[Fan] I2C Bus {current_bus_id} at 0x{current_i2c_addr:X} initialization failed: {e}. Trying next combo...")
-        bus = None
-    except Exception as e:
-        print(f"[Fan] I2C Bus {current_bus_id} failed with generic error: {e}. Trying next combo...")
-        bus = None
-
-if bus is None:
-    print("[Fan] FATAL ERROR: Could not initialize I2C bus or EMC chip on any known bus/address.")
-
-# --- TACHOMETER READ FUNCTION ---
-def read_fan_rpm(bus, i2c_addr):
-    if bus is None:
+        logger.error(f"SMBUS Write Error (Duty): {e}")
         return -1
 
+def smbus_read_fan_rpm(bus, i2c_addr):
     try:
         # Read the 16-bit Tachometer value
         tach_value = bus.read_word_data(i2c_addr, TACH_HIGH_REG)
@@ -83,45 +82,132 @@ def read_fan_rpm(bus, i2c_addr):
             return 0  # Fan is likely stopped or error
 
         # RPM Calculation Formula from EMC Datasheet
-        rpm = (1843200 / tach_value) * TACH_DIVISOR 
+        # RPM = (f_tach * 60) / (tach_count)
+        rpm = (1843200 / tach_value) * TACH_DIVISOR
 
         return int(round(rpm))
 
     except IOError as e:
-        # I2C communication error
+        logger.error(f"SMBUS Read Error (RPM): {e}")
         return -2 # Indicates read failure
 
-# --- PWM WRITE FUNCTION ---
-def set_pwm_duty(bus, i2c_addr, duty_percent):
-    if bus is None:
-        return -1
 
-    # Scale 0-100% duty cycle to 8-bit register value (0-255)
-    duty_byte = int(round(duty_percent * 2.55)) # 255/100 = 2.55
-    duty_byte = max(0x00, min(0xFF, duty_byte))
+# --- CIRCUITPYTHON IMPLEMENTATION ---
+try:
+    import board
+    import busio
+    from adafruit_emc2101.emc2101_lut import EMC2101_LUT as EMC2101
+    CIRCUITPYTHON_AVAILABLE = True
+except ImportError as e:
+    CIRCUITPYTHON_AVAILABLE = False
+    logger.warning(f"CircuitPython libraries (board/busio/emc2101) not found or import error: {e}")
+    logger.warning("CircuitPython functionality disabled.")
 
+
+def circuitpython_initialize():
+    """
+    Initializes EMC2101 using CircuitPython libraries and forces Manual PWM Mode
+    via direct register access.
+    """
+    if not CIRCUITPYTHON_AVAILABLE:
+        return None
+        
     try:
-        bus.write_byte_data(i2c_addr, FAN_PWM_REG, duty_byte)
-        return 0
-    except IOError as e:
-        print(f"[Fan] I2C Write Error: {e}")
-        return -1
+        # Uses the default I2C bus (usually bus 1 on Raspberry Pi)
+        i2c = busio.I2C(board.SCL, board.SDA) 
+        emc = EMC2101(i2c)
+        
+        # Apply custom PWM configuration for fan stability
+        emc.set_pwm_clock(use_preset=False)
+        emc.pwm_frequency = 31            # Datasheet recommends using the maximum value of 31 (0x1F)
+        emc.pwm_frequency_divisor = 127   # Larger divisor = lower frequency
+        emc.lut_enabled = False           # Disable Lookup Table (LUT)
+        
+        logger.info("CircuitPython initialization SUCCESS.")
+        return emc
+        
+    except Exception as e:
+        logger.error(f"CircuitPython Initialization failed: {e}")
+        return None
+
+# --- MAIN INITIALIZATION LOGIC (PRIORITIZED) ---
+def initialize_fan_controller():
+    global hardware_mode, active_bus_obj, i2c_address, fan_config_reg, set_pwm_duty, read_fan_rpm
+
+    # 1. Attempt CircuitPython (Priority)
+    if CIRCUITPYTHON_AVAILABLE:
+        logger.info("Starting CircuitPython initialization (Priority Check)...")
+        emc_obj = circuitpython_initialize()
+        
+        if emc_obj:
+            # SUCCESS: Set global state to CircuitPython mode
+            active_bus_obj = emc_obj
+            hardware_mode = 'CIRCUITPYTHON'
+            set_pwm_duty = lambda duty: setattr(active_bus_obj, 'manual_fan_speed', duty)
+            read_fan_rpm = lambda: int(active_bus_obj.fan_speed) 
+            logger.info("CircuitPython mode successfully initialized.")
+            return True
+
+    # 2. Attempt SMBus Fallback
+    if SMBUS_AVAILABLE:
+        if hardware_mode == 'UNKNOWN':
+            logger.info("CircuitPython not initialized. Starting SMBus fallback attempts...")
+
+        for current_bus_id, current_i2c_addr, current_config_reg in I2C_PRIORITY_COMBOS:
+            try:
+                bus = smbus2.SMBus(current_bus_id)
+                # Attempt read to confirm chip presence
+                bus.read_byte_data(current_i2c_addr, 0xFD)
+
+                # Configure the fan to Manual PWM Mode
+                bus.write_byte_data(current_i2c_addr, current_config_reg, MANUAL_PWM_VALUE)
+
+                # SUCCESS: Set global state to SMBus mode
+                active_bus_obj = bus
+                i2c_address = current_i2c_addr
+                fan_config_reg = current_config_reg
+                hardware_mode = 'SMBUS'
+                set_pwm_duty = lambda duty: smbus_set_pwm_duty(bus, i2c_address, duty)
+                read_fan_rpm = lambda: smbus_read_fan_rpm(bus, i2c_address)
+                logger.info(f"SMBus SUCCESS on Bus {current_bus_id} at 0x{i2c_address:X}.")
+                return True
+
+            except Exception as e:
+                logger.debug(f"SMBus check failed on Bus {current_bus_id} at 0x{current_i2c_addr:X}: {e}")
+                pass # Try next combo
+
+    # 3. Initialization Failed
+    logger.critical("FATAL ERROR: Could not initialize fan controller in any mode.")
+    return False
 
 # --- UDP SOCKET SETUP ---
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))
 sock.setblocking(0)
-print(f"[Fan] Listening for UDP control on port {UDP_PORT}")
 
-# --- MAIN LOOP ---
+# --- LOGGING SETUP for PLOTTING ---
+t_log, rpm_log, duty_log = [], [], []
+start_time = time.time()
+
+# --- MAIN EXECUTION ---
+if not initialize_fan_controller():
+    logger.critical("Exiting script due to initialization failure.")
+    sys.exit(1)
+
+logger.info(f"Fan Controller running in mode: {hardware_mode}")
+logger.info(f"Listening for UDP control on port {UDP_PORT}")
+
 current_duty = -1
 try:
     while True:
         ready = select.select([sock], [], [], TIMEOUT)
+
+        # Determine current time for logging
+        now = time.time() - start_time
+
         if ready[0]:
-            # Drain all packets from the buffer, only keeping the last one
+            # Drain and keep the latest packet
             latest_data = None
-            # Use select with a zero timeout (0) to check for more packets immediately
             while ready[0]:
                 data, addr = sock.recvfrom(BUFFER_SIZE)
                 latest_data = data
@@ -133,29 +219,70 @@ try:
                     duty = float(data.decode().strip())
                     duty = max(0, min(100, duty))  # clamp
 
+                    # Optimization: only write to I2C if the duty cycle has changed
                     if duty != current_duty:
-                        if set_pwm_duty(bus, i2c_address, duty) == 0:
+                        result = set_pwm_duty(duty)
+                        if result == 0 or hardware_mode == 'CIRCUITPYTHON': 
                             current_duty = duty
 
-                    # Read and log the fan status regardless of packet arrival
-                    fan_rpm = read_fan_rpm(bus, i2c_address)
-                    print(f"[Fan] Duty={current_duty:5.1f}% | RPM={fan_rpm:6d} | from {addr[0]}")
+                    fan_rpm = read_fan_rpm()
+
+                    # Log successful update
+                    t_log.append(now)
+                    duty_log.append(current_duty)
+                    rpm_log.append(fan_rpm)
+
+                    logger.info(f"Duty={current_duty:5.1f}% | RPM={fan_rpm:6d} | from {addr[0]}")
 
                 except ValueError:
-                    print("[Fan] Invalid data received.")
+                    logger.warning("Invalid data received (could not convert to float).")
                 except Exception as e:
-                    print(f"[Fan] Error during processing: {e}")
+                    logger.error(f"Error during packet processing: {e}")
         else:
-            # If no packet, still read RPM to monitor fan health
-            fan_rpm = read_fan_rpm(bus, i2c_address)
-            print(f"[Fan] IDLE. Duty={current_duty:5.1f}% | RPM={fan_rpm:6d}")
+            # Idle: read RPM to monitor fan health
+            fan_rpm = read_fan_rpm()
+
+            # Log idle polling data
+            t_log.append(now)
+            duty_log.append(current_duty)
+            rpm_log.append(fan_rpm)
+
+            logger.info(f"IDLE ({hardware_mode}). Duty={current_duty:5.1f}% | RPM={fan_rpm:6d}")
             time.sleep(TIMEOUT * 10) # Slow down polling when idle
 
 except KeyboardInterrupt:
-    print("\n[Fan] Stopped manually.")
+    logger.info("Stopped manually.")
 finally:
-    # Ensure a valid address was found before attempting to write 0
-    if bus and i2c_address is not None:
-        set_pwm_duty(bus, i2c_address, 0) # Set duty to 0% on exit
+    # Attempt to set duty to 0% on exit
+    if current_duty != 0:
+        set_pwm_duty(0) 
+        logger.info("Fan duty set to 0% on exit.")
     sock.close()
-    print("[Fan] Clean exit.")
+    logger.info("Clean exit.")
+
+    # --- PLOTTING ---
+    if t_log:
+        plt.figure(figsize=(10, 8))
+        plt.suptitle("Fan Node Performance: Duty Cycle vs. Measured RPM", fontsize=14)
+
+        # 1. Fan Duty Cycle
+        plt.subplot(2, 1, 1)
+        plt.plot(t_log, duty_log, label="Commanded Duty Cycle (%)", color='orange')
+        plt.ylabel("Duty Cycle (%)")
+        plt.legend(loc='upper right')
+        plt.grid(True)
+        plt.title("Commanded Control Effort")
+
+        # 2. Measured Fan RPM
+        plt.subplot(2, 1, 2)
+        plt.plot(t_log, rpm_log, label="Measured RPM", color='blue')
+        plt.ylabel("RPM")
+        plt.xlabel("Time (s)")
+        plt.legend(loc='upper right')
+        plt.grid(True)
+        plt.title("Actual Fan Response (Tachometer)")
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.97]) # Adjust for suptitle
+        plt.show()
+    else:
+        logger.warning("No data logged, skipping plot generation.")
