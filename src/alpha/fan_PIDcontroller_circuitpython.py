@@ -117,13 +117,6 @@ def circuitpython_initialize():
         i2c = busio.I2C(board.SCL, board.SDA) 
         emc = EMC2101(i2c)
         
-        # Determine the correct fan configuration register for the detected chip (defaulting to EMC2101)
-        fan_cfg_reg_addr = FAN_CONFIG_REG_EMC2101 # Default to EMC2101 register
-        
-        # This command explicitly writes 0x00 to the fan control source register, 
-        # which forces the chip to use Manual PWM and disable the LUT.
-        emc.write_fan_register(FAN_CONFIG_REG_EMC2101, MANUAL_PWM_VALUE)
-        
         # Apply custom PWM configuration for fan stability
         emc.set_pwm_clock(use_preset=False)
         emc.pwm_frequency = 31            # Datasheet recommends using the maximum value of 31 (0x1F)
