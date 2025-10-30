@@ -67,12 +67,28 @@ The original source project is licensed under **Creative Commons Attribution-Non
 This derivative work (all files outside of `/orig`) is licensed under the [MIT License](LICENSE).
 
 ## References
+
+### Original PingPongPID Project
 1. Salzmann et al. (2025): Hovering a ping-pong ball: A demonstration setup for teaching PID control
       - (https://doi.org/10.26434/chemrxiv-2025-328tk)  
-2. An example of how linux traffic scheduler improves control under traffic congestion:  
-      - (https://github.com/NXP/dds-tsn)
-3. Depth/Distance Sensors:  
+
+### PWM Fan Control:  
+3. PWM basics: https://www.arduino.cc/en/Tutorial/Foundations/PWM
+4. PWM fan control: https://github.com/folkhack/raspberry-pi-pwm-fan-2
+   
+### I2C (Inter-Integrated Circuit)  
+5. https://cdn-learn.adafruit.com/downloads/pdf/emc2101-fan-controller-and-temperature-sensor.pdf
+6. https://www.jeffgeerling.com/blog/2021/controlling-pwm-fans-raspberry-pi-cm4-io-boards-emc2301
+
+### Distance Sensor 
+7. Depth/Distance Sensors:  
       - (https://randomnerdtutorials.com/complete-guide-for-ultrasonic-sensor-hc-sr04/)  
-4. PWM Fan Control:  
-      - PWM basics: https://www.arduino.cc/en/Tutorial/Foundations/PWM  
-      - PWM fan control: https://github.com/folkhack/raspberry-pi-pwm-fan-2  
+
+### Traffic Scheduler 
+8. An example of how linux traffic scheduler improves control under traffic congestion:
+    - https://github.com/NXP/dds-tsn
+  
+### Potentiometers
+9. Raspberry Pi Tutorial: How to use a potentiometer. Ardumotive Arduino Greek Playground. Retrieved from [ardumotive.com](https://www.ardumotive.com/how-to-use-a-potentiometeren.html)
+10. Circuit Basics: Using Potentiometers with the Raspberry Pi. Retrieved from [circuitbasics.com](https://www.circuitbasics.com/using-potentiometers-with-raspberry-pi/).
+
