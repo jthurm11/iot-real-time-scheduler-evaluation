@@ -10,6 +10,7 @@ import sys
 import logging
 import numpy as np
 import matplotlib.pyplot as plt
+import json # Added for network stream
 
 # Set up logging for better error visibility
 logging.basicConfig(level=logging.INFO, format='[Fan] %(levelname)s: %(message)s')
@@ -20,6 +21,11 @@ UDP_IP = "0.0.0.0"            # Listen on all interfaces
 UDP_PORT = 5005
 TIMEOUT = 0.01
 BUFFER_SIZE = 1024
+
+# --- WEB STREAM ---
+BETA_NODE_IP = "192.168.22.2"
+WEB_APP_PORT = 5006
+DATA_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # --- I2C/SMBUS SPECIFIC CONFIGURATION ---
 I2C_PRIORITY_COMBOS = [
@@ -189,6 +195,31 @@ sock.setblocking(0)
 t_log, rpm_log, duty_log = [], [], []
 start_time = time.time()
 
+# --- WEB STREAM FUNCTION ---
+def send_fan_data(duty_cycle, measured_rpm):
+    """
+    Sends real-time fan state data (duty cycle and RPM) via UDP to the web app.
+
+    Args:
+        duty_cycle (int): The currently commanded PWM duty cycle (0-100).
+        measured_rpm (int): The latest measured fan RPM.
+    """
+    try:
+        data_packet = {
+            "type": "fan",
+            "duty": duty_cycle,
+            "rpm": measured_rpm,
+            "ts": time.time()
+        }
+
+        # Send data as a JSON string over UDP to the Beta Node
+        DATA_SOCK.sendto(json.dumps(data_packet).encode('utf-8'), (BETA_NODE_IP, WEB_APP_PORT))
+
+    except Exception as e:
+        # Avoid crashing the controller loop if the network communication fails
+        # print(f"Warning: Failed to send fan data: {e}") 
+        pass
+
 # --- MAIN EXECUTION ---
 if not initialize_fan_controller():
     logger.critical("Exiting script due to initialization failure.")
@@ -227,6 +258,9 @@ try:
 
                     fan_rpm = read_fan_rpm()
 
+                    # Function call to send web stream data
+                    send_fan_data(current_duty, fan_rpm)
+
                     # Log successful update
                     t_log.append(now)
                     duty_log.append(current_duty)
@@ -241,6 +275,9 @@ try:
         else:
             # Idle: read RPM to monitor fan health
             fan_rpm = read_fan_rpm()
+
+            # Function call to send web stream data
+            send_fan_data(current_duty, fan_rpm)
 
             # Log idle polling data
             t_log.append(now)

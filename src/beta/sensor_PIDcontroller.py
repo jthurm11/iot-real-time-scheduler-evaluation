@@ -4,6 +4,7 @@ from gpiozero import DistanceSensor
 from pid_controller import PID
 import socket, time, matplotlib.pyplot as plt
 import numpy as np # Added for plotting utility
+import json # Added for network stream
 
 # Import necessary components from the network_injector module
 from network_injector import CONGESTION_DELAY, PACKET_LOSS_RATE, inject_delay_and_check_loss, get_current_status
@@ -13,6 +14,11 @@ FAN_IP = "192.168.22.1"      # IP of the fan Pi
 FAN_PORT = 5005              # Must match opened port on neighbor node!
 SETPOINT = 20.0              # Desired height (cm)
 SAMPLE_TIME = 0.1            # Control interval (s)
+
+# WEB MONITORING
+WEB_APP_IP = "127.0.0.1"     # The master control server (Flask app) is running locally
+WEB_APP_PORT = 5006          # Dedicated port for real-time data ingestion
+DATA_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # PID tuning parameters — **ADJUSTED FOR FASTER RAMP UP**
 # Kp increased 5x (0.05 -> 0.25) and Ki increased 3x (0.05 -> 0.15) to force a faster response.
@@ -30,7 +36,6 @@ pid = PID(
 DistanceSensor.pin_factory = PiGPIOFactory()
 sensor = DistanceSensor(echo=24, trigger=23, max_distance=5)
 
-
 # UDP SETUP
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 print(f"[Sensor] PID control started. Sending to {FAN_IP}:{FAN_PORT}")
@@ -45,6 +50,41 @@ print(f"[Sensor] Congestion Settings: Delay={delay_s}s | Loss={loss_perc}%")
 t_log, h_log, sp_log, out_log, err_log, delay_log = [], [], [], [], [], []
 # Logs for the exact time/value when a packet was dropped
 dropped_points_t, dropped_points_y = [], []
+
+# WEB STREAM
+def send_sensor_data(h_current, pid_controller, error, output):
+    """
+    Sends real-time sensor and PID state data via UDP to the web app listener.
+
+    Args:
+        h_current (float): The current measured height (input).
+        pid_controller (PID object): The initialized PID object (to get the setpoint).
+        error (float): The calculated error (setpoint - input).
+        output (float): The PID's calculated output value (0-100%).
+    """
+    try:
+        # Import CONGESTION_DELAY and PACKET_LOSS_RATE from network_injector
+        from network_injector import CONGESTION_DELAY, PACKET_LOSS_RATE 
+
+        data_packet = {
+            "type": "sensor",
+            "h": round(h_current, 3),           # Measured height
+            "sp": round(pid_controller.setpoint, 2),  # Setpoint
+            "out": round(output, 2),           # PID Output (Fan Duty Cycle)
+            "err": round(error, 3),            # PID Error
+            "delay_s": CONGESTION_DELAY,       # Applied network delay (s)
+            "loss_p": PACKET_LOSS_RATE,        # Applied packet loss (%)
+            "ts": time.time()
+        }
+
+        # Send data as a JSON string over UDP
+        DATA_SOCK.sendto(json.dumps(data_packet).encode('utf-8'), (WEB_APP_IP, WEB_APP_PORT))
+
+    except Exception as e:
+        # Avoid crashing the control loop if the network communication fails
+        # print(f"Warning: Failed to send sensor data: {e}") 
+        pass
+
 
 start = time.time()
 
@@ -85,6 +125,9 @@ try:
 
         # Print live status
         print(f"[Sensor] t={now:5.2f}s | h={distance_cm:5.2f} cm | out={output:6.2f}% | err={error:6.2f} | Status: {send_status}")
+
+        # Function call to send web stream data
+        send_sensor_data(distance_cm, pid, error, output)
 
         # The time.sleep() call below accounts for the total SAMPLE_TIME, but since 
         # `inject_delay_and_check_loss()` already blocks for `CONGESTION_DELAY`, 
