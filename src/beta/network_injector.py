@@ -4,51 +4,71 @@
 
 import time
 import random
-import math
+import json 
+import os 
+import logging
 
-# --- CONFIGURATION (Adjust these values to simulate congestion) ---
+logger = logging.getLogger(__name__)
 
-# Static Delay (in seconds). This simulates latency.
-# 0.05s is a good starting point for moderate congestion. Set to 0.0 for no delay.
-CONGESTION_DELAY = 0.005 
+# Global state to hold the configuration loaded from a file
+_CURRENT_STATUS = {
+    "delay_s": 0.0,
+    "loss_rate_perc": 0.0
+}
 
-# Packet Loss Rate (as a percentage 0.0 to 100.0).
-# This simulates dropped packets due to heavy network load.
-# Set to 0.0 for no loss. Set higher to simulate significant degradation.
-PACKET_LOSS_RATE = 0.0 
+# --- CONFIGURATION FUNCTIONS ---
 
-# --- END CONFIGURATION ---
+def load_config(filepath):
+    """
+    Loads congestion settings from a JSON file and updates the module's state.
+    Expected JSON keys: 'CONGESTION_DELAY' (s), 'PACKET_LOSS_RATE' (%).
+    """
+    global _CURRENT_STATUS
+    # Reset to defaults if file not found
+    _CURRENT_STATUS["delay_s"] = 0.0
+    _CURRENT_STATUS["loss_rate_perc"] = 0.0
+    
+    if not os.path.exists(filepath):
+        logger.warning(f"Congestion config file not found at: {filepath}. Using default zero values.")
+        return
+
+    try:
+        with open(filepath, 'r') as f:
+            config = json.load(f)
+            # Read required keys, defaulting to 0.0 if not present
+            _CURRENT_STATUS["delay_s"] = config.get("CONGESTION_DELAY", 0.0)
+            _CURRENT_STATUS["loss_rate_perc"] = config.get("PACKET_LOSS_RATE", 0.0)
+            logger.info(f"Loaded congestion config: Delay={_CURRENT_STATUS['delay_s']}s, Loss={_CURRENT_STATUS['loss_rate_perc']}%")
+
+    except json.JSONDecodeError:
+        logger.error(f"Error decoding JSON from congestion config file: {filepath}. Using default zero values.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred reading congestion config: {e}. Using default zero values.")
 
 def inject_delay_and_check_loss():
     """
-    Applies a delay and determines if the packet should be dropped.
+    Applies a delay and determines if the packet should be dropped based on loaded config.
 
     Returns:
         bool: True if the packet should be SENT, False if it should be DROPPED.
     """
+    delay = _CURRENT_STATUS["delay_s"]
+    loss_rate = _CURRENT_STATUS["loss_rate_perc"]
 
     # 1. Inject Latency
-    if CONGESTION_DELAY > 0:
-        time.sleep(CONGESTION_DELAY)
+    if delay > 0:
+        time.sleep(delay)
 
     # 2. Check for Packet Loss
-    if PACKET_LOSS_RATE > 0.0:
+    if loss_rate > 0.0:
         # Check against the loss rate probability (0.0 to 100.0)
-        if random.random() * 100.0 < PACKET_LOSS_RATE:
+        if random.random() * 100.0 < loss_rate:
             # Packet loss occurred
-            return False 
+            return False
 
     # If no loss or loss rate is 0, the packet is sent
     return True
 
 def get_current_status():
     """Returns the current congestion settings for logging/UI."""
-    return {
-        "delay_s": CONGESTION_DELAY,
-        "loss_rate_perc": PACKET_LOSS_RATE
-    }
-
-# Ensure the delay is not more than the sample time of the PID controller
-# (This is just a warning, as exceeding the sample time will slow down the whole loop)
-if CONGESTION_DELAY > 0.1: # Assuming SAMPLE_TIME in sensor_PIDcontroller.py is 0.1s
-    print(f"[Injector Warning] CONGESTION_DELAY ({CONGESTION_DELAY}s) is greater than the PID sample time.")
+    return _CURRENT_STATUS

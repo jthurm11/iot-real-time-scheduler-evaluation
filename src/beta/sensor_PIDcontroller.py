@@ -2,31 +2,103 @@
 from gpiozero.pins.pigpio import PiGPIOFactory
 from gpiozero import DistanceSensor
 from pid_controller import PID
-import socket, time, matplotlib.pyplot as plt
-import numpy as np # Added for plotting utility
-import json # Added for network stream
+import socket, time
+import json
+import os
+import logging
+import sys
 
 # Import necessary components from the network_injector module
-from network_injector import CONGESTION_DELAY, PACKET_LOSS_RATE, inject_delay_and_check_loss, get_current_status
+from network_injector import load_config, get_current_status, inject_delay_and_check_loss
 
-# CONFIGURATION
-FAN_IP = "192.168.22.1"      # IP of the fan Pi
-FAN_PORT = 5005              # Must match opened port on neighbor node!
-SETPOINT = 20.0              # Desired height (cm)
-SAMPLE_TIME = 0.1            # Control interval (s)
+# --- CONFIGURATION FILE PATHS (Centralized) ---
+CONFIG_DIR = "/opt/project/common/"
+NETWORK_CONFIG_FILE = os.path.join(CONFIG_DIR, "network_config.json")
+CONGESTION_CONFIG_FILE = os.path.join(CONFIG_DIR, "congestion_config.json")
+SETPOINT_CONFIG_FILE = os.path.join(CONFIG_DIR, "setpoint_config.json")
 
-# WEB MONITORING
-WEB_APP_IP = "127.0.0.1"     # The master control server (Flask app) is running locally
-WEB_APP_PORT = 5006          # Dedicated port for real-time data ingestion
-DATA_SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='[Sensor] %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-# PID tuning parameters — **ADJUSTED FOR FASTER RAMP UP**
-# Kp increased 5x (0.05 -> 0.25) and Ki increased 3x (0.05 -> 0.15) to force a faster response.
+# Global variables for runtime configuration
+FAN_IP = None
+FAN_PORT = None
+SETPOINT = 20.0
+SAMPLE_TIME = 0.1
+# Sensor listens for fan data on this port (new)
+SENSOR_DATA_LISTEN_PORT = 0 
+
+def load_network_config():
+    """Loads network and timing parameters from the configuration file."""
+    global FAN_IP, FAN_PORT, SAMPLE_TIME, SENSOR_DATA_LISTEN_PORT
+    
+    if not os.path.exists(NETWORK_CONFIG_FILE):
+        logger.error(f"Network config file not found: {NETWORK_CONFIG_FILE}. Cannot run.")
+        return False
+    
+    try:
+        with open(NETWORK_CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+            # Read fan connection parameters (output)
+            FAN_IP = config.get("FAN_NODE_IP")
+            FAN_PORT = config.get("FAN_COMMAND_PORT") # Updated key
+            SAMPLE_TIME = config.get("SAMPLE_TIME_S", 0.1)
+            
+            # Read Sensor's Data Listen Port (input)
+            SENSOR_DATA_LISTEN_PORT = config.get("FAN_DATA_LISTEN_PORT") # Port where sensor listens for fan telemetry
+            
+            if not all([FAN_IP, FAN_PORT, SAMPLE_TIME, SENSOR_DATA_LISTEN_PORT]):
+                logger.error("Missing critical network/time parameters in config.")
+                return False
+            
+            logger.info(f"Loaded Network Config: Fan IP={FAN_IP}, Command Port={FAN_PORT}, SampleTime={SAMPLE_TIME}s, Data Listen Port={SENSOR_DATA_LISTEN_PORT}")
+            return True
+    
+    except json.JSONDecodeError:
+        logger.error(f"Error decoding JSON from network config file: {NETWORK_CONFIG_FILE}.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred reading network config: {e}.")
+    return False
+
+def load_setpoint_config():
+    """Loads the desired setpoint from the configuration file."""
+    global SETPOINT
+    if not os.path.exists(SETPOINT_CONFIG_FILE):
+        logger.warning(f"Setpoint config file not found at: {SETPOINT_CONFIG_FILE}. Using default SETPOINT={SETPOINT}cm.")
+        return
+
+    try:
+        with open(SETPOINT_CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+            loaded_setpoint = config.get("SETPOINT_CM")
+            if loaded_setpoint is not None and isinstance(loaded_setpoint, (int, float)):
+                SETPOINT = float(loaded_setpoint)
+                logger.info(f"Loaded SETPOINT: {SETPOINT}cm.")
+            else:
+                logger.warning(f"SETPOINT_CM key missing or invalid in config. Using default SETPOINT={SETPOINT}cm.")
+
+    except json.JSONDecodeError:
+        logger.error(f"Error decoding JSON from setpoint config file: {SETPOINT_CONFIG_FILE}. Using default SETPOINT={SETPOINT}cm.")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred reading setpoint config: {e}. Using default SETPOINT={SETPOINT}cm.")
+
+# --- INITIALIZATION ---
+if not load_network_config():
+    # If network config failed to load, exit early
+    sys.exit(1)
+
+load_setpoint_config()
+# Load congestion values into network_injector module
+load_config(CONGESTION_CONFIG_FILE) 
+
+
+# PID initialization depends on loaded SETPOINT and SAMPLE_TIME
 pid = PID(
     Kp=0.25,
     Ki=0.15,
-    Kd=0.005, # Kd slightly increased to help dampen overshoot
-    setpoint=SETPOINT,
+    Kd=0.005,
+    setpoint=SETPOINT, 
     sample_time=SAMPLE_TIME,
     output_limits=(0, 100),
     controller_direction='REVERSE'
@@ -34,157 +106,81 @@ pid = PID(
 
 # SENSOR SETUP (pigpio)
 DistanceSensor.pin_factory = PiGPIOFactory()
-sensor = DistanceSensor(echo=24, trigger=23, max_distance=5)
-
-# UDP SETUP
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-print(f"[Sensor] PID control started. Sending to {FAN_IP}:{FAN_PORT}")
-
-# Capture static status variables for continuous logging
-status = get_current_status()
-delay_s = status['delay_s']
-loss_perc = status['loss_rate_perc']
-print(f"[Sensor] Congestion Settings: Delay={delay_s}s | Loss={loss_perc}%")
-
-# LOGGING SETUP
-t_log, h_log, sp_log, out_log, err_log, delay_log = [], [], [], [], [], []
-# Logs for the exact time/value when a packet was dropped
-dropped_points_t, dropped_points_y = [], []
-
-# WEB STREAM
-def send_sensor_data(h_current, pid_controller, error, output):
-    """
-    Sends real-time sensor and PID state data via UDP to the web app listener.
-
-    Args:
-        h_current (float): The current measured height (input).
-        pid_controller (PID object): The initialized PID object (to get the setpoint).
-        error (float): The calculated error (setpoint - input).
-        output (float): The PID's calculated output value (0-100%).
-    """
-    try:
-        # Import CONGESTION_DELAY and PACKET_LOSS_RATE from network_injector
-        from network_injector import CONGESTION_DELAY, PACKET_LOSS_RATE 
-
-        data_packet = {
-            "type": "sensor",
-            "h": round(h_current, 3),           # Measured height
-            "sp": round(pid_controller.setpoint, 2),  # Setpoint
-            "out": round(output, 2),           # PID Output (Fan Duty Cycle)
-            "err": round(error, 3),            # PID Error
-            "delay_s": CONGESTION_DELAY,       # Applied network delay (s)
-            "loss_p": PACKET_LOSS_RATE,        # Applied packet loss (%)
-            "ts": time.time()
-        }
-
-        # Send data as a JSON string over UDP
-        DATA_SOCK.sendto(json.dumps(data_packet).encode('utf-8'), (WEB_APP_IP, WEB_APP_PORT))
-
-    except Exception as e:
-        # Avoid crashing the control loop if the network communication fails
-        # print(f"Warning: Failed to send sensor data: {e}") 
-        pass
+# Placeholder: assuming echo=24, trigger=23 are the correct pins for the distance sensor
+sensor = DistanceSensor(echo=24, trigger=23, max_distance=5) 
 
 
-start = time.time()
+# UDP SETUP (for sending commands to Fan)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
+sock.settimeout(0.1) 
 
 
-# MAIN CONTROL LOOP
+# PID Loop State Variables
+last_time = time.time()
+# Initialize a simulated height for the first loop
+simulated_height = SETPOINT
+
+logger.info("Starting PID Control Loop...")
+
 try:
     while True:
-        # Measure current distance (m → cm)
-        distance_cm = sensor.distance * 100.0
+        now = time.time()
+        time_elapsed = now - last_time
 
-        # Compute new control output from PID
-        output = pid.compute(distance_cm)
+        if time_elapsed >= SAMPLE_TIME:
+            # --- 1. Read Sensor Input (using a mock for simulation purposes) ---
+            
+            # Simplified first-order response simulation for testing logic:
+            pid_output = pid.output if pid.output is not None else 0.0
+            
+            target_value = (pid_output / 100.0) * 40.0 # Max height simulated at 40cm
+            time_constant = 0.5 
+            delta_h = (target_value - simulated_height) * (time_elapsed / time_constant)
+            input_val = simulated_height + delta_h
 
-        # --- CONGESTION INJECTION ---
-        # CORRECTED: Call the function from the provided network_injector.py
-        should_send = inject_delay_and_check_loss() 
+            # Ensure input is bounded (e.g., 0cm to 40cm)
+            input_val = max(0.0, min(40.0, input_val))
+            simulated_height = input_val # Update simulated state
 
-        if should_send:
-            # Send duty cycle command to fan Pi
-            sock.sendto(f"{output:.2f}".encode(), (FAN_IP, FAN_PORT))
-            send_status = "SENT"
-        else:
-            # Packet was dropped due to simulated congestion
-            send_status = "DROPPED"
-            # Log the dropped packet for plotting
-            dropped_points_t.append(time.time() - start)
-            dropped_points_y.append(output)
+            # --- 2. Compute PID Output ---
+            pid.compute(input_val)
+            output_val = pid.output
 
-        # Log data
-        now = time.time() - start
-        error = pid.setpoint - distance_cm
-        t_log.append(now)
-        h_log.append(distance_cm)
-        sp_log.append(pid.setpoint)
-        out_log.append(output)
-        err_log.append(error)
-        delay_log.append(delay_s) # Log the currently active delay (from status check)
+            # --- 3. Apply Congestion and Send Command ---
+            congestion_status = get_current_status()
+            packet_sent = inject_delay_and_check_loss()
+            now_str = time.strftime('%H:%M:%S')
 
-        # Print live status
-        print(f"[Sensor] t={now:5.2f}s | h={distance_cm:5.2f} cm | out={output:6.2f}% | err={error:6.2f} | Status: {send_status}")
+            if packet_sent:
+                command_str = f"{output_val:.1f}"
+                try:
+                    sock.sendto(command_str.encode('utf-8'), (FAN_IP, FAN_PORT))
+                    logger.info(f"[{now_str}] FAN: {output_val:5.1f}% | H: {input_val:5.1f}cm | SP: {SETPOINT:5.1f}cm | DELAY: {congestion_status['delay_s']:.3f}s | SENT")
+                except Exception as e:
+                    logger.error(f"[{now_str}] Failed to send UDP command: {e}")
+            else:
+                logger.warning(f"[{now_str}] FAN: Packet DROPPED (Loss Rate: {congestion_status['loss_rate_perc']}%)")
 
-        # Function call to send web stream data
-        send_sensor_data(distance_cm, pid, error, output)
+            # Reset timer
+            last_time = now
 
-        # The time.sleep() call below accounts for the total SAMPLE_TIME, but since 
-        # `inject_delay_and_check_loss()` already blocks for `CONGESTION_DELAY`, 
-        # the time spent inside that function is automatically handled.
-        time_elapsed_in_loop = time.time() - start - now
-        time.sleep(max(0, SAMPLE_TIME - (time.time() - start + now)))
-
+        time.sleep(0.001)
 
 except KeyboardInterrupt:
-    print("\n[Sensor] Experiment ended manually.")
+    logger.info("PID controller stopped manually.")
+except Exception as e:
+    logger.error(f"An unexpected error occurred in the main loop: {e}")
+
 finally:
+    # Attempt to set fan speed to 0% on exit
+    try:
+        if FAN_IP and FAN_PORT:
+            logger.info("Attempting to set fan to 0% on clean exit...")
+            message = "0.0".encode('utf-8')
+            sock.sendto(message, (FAN_IP, FAN_PORT))
+            logger.info("Fan set to 0%.")
+    except Exception as e:
+        logger.error(f"Error setting fan to 0% on exit: {e}")
+    
     sock.close()
-    print("[Sensor] Cleaning up and plotting results...")
-
-
-    # PLOTTING
-    plt.figure(figsize=(12, 10))
-    plt.suptitle("Distributed Ping-Pong Ball PID Response", fontsize=14)
-
-
-    # Height vs Setpoint
-    plt.subplot(4, 1, 1)
-    plt.plot(t_log, h_log, label="Measured Height h(t)", color='blue')
-    plt.plot(t_log, sp_log, '--', label="Setpoint hSP(t)", color='red')
-    plt.ylabel("Height (cm)")
-    plt.legend(loc='upper right')
-    plt.grid(True)
-    plt.title("Ball Height (cm)")
-
-    # PID Output (Fan %)
-    plt.subplot(4, 1, 2)
-    plt.plot(t_log, out_log, label="Fan Output (PID %)", color='green')
-    # Plot dropped points directly on the output graph
-    if dropped_points_t:
-        plt.scatter(dropped_points_t, dropped_points_y, marker='x', color='red', s=50, label="Packet Dropped", zorder=5)
-    plt.ylabel("PWM Output (%)")
-    plt.legend(loc='upper right')
-    plt.grid(True)
-    plt.title("Control Effort / Fan Output (%)")
-
-    # Congestion Delay
-    plt.subplot(4, 1, 3)
-    # Using 'step' to show the instantaneous change in delay
-    plt.step(t_log, delay_log, label="Congestion Delay (s)", color='#FFA500') # Orange
-    plt.ylabel("Delay (s)")
-    plt.legend(loc='upper right')
-    plt.grid(True)
-    plt.title("Injected Network Latency (Delay)")
-
-    # Error vs Time
-    plt.subplot(4, 1, 4)
-    plt.plot(t_log, err_log, label="Error e(t) = hSP - h", color='purple')
-    plt.xlabel("Time (s)")
-    plt.ylabel("Error (cm)")
-    plt.legend(loc='upper right')
-    plt.grid(True)
-    plt.title("Control Error (Setpoint - Measured)")
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.97]) # Adjust for suptitle
-    plt.show()
+    logger.info("Clean exit.")

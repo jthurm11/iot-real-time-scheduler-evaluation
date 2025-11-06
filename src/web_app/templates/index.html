@@ -4,322 +4,454 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IoT Project Dashboard</title>
-    <!-- Tailwind CSS (preferred over Bootstrap for single-file HTML) -->
+    <!-- Tailwind CSS CDN for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                }
-            }
-        }
-    </script>
-    <!-- Chart.js for graphing -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.4/dist/Chart.min.js"></script>
-    <!-- Socket.IO Client -->
-    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
     <style>
-        .chart-container {
-            height: 250px; /* Fixed height for scrolling graphs */
-        }
-        .data-label {
-            @apply text-xs font-semibold uppercase text-gray-500;
-        }
-        .data-value {
-            @apply text-3xl font-extrabold text-indigo-600;
-        }
+        /* Custom scrollbar for better look */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        /* Chart specific height */
+        .chart-container { height: 350px; }
     </style>
+    <!-- Chart.js for graphing -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Socket.IO Client -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
 </head>
-<body class="bg-gray-50 font-sans p-6">
-
-<div class="max-w-7xl mx-auto">
-    <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Real-Time Traffic Scheduler Dashboard</h1>
+<body class="bg-gray-900 text-white font-sans antialiased p-4 sm:p-8">
     
-    <!-- MASTER CONTROL & CONFIGURATION -->
-    <div class="bg-white shadow-lg rounded-xl p-4 mb-6 border border-gray-200">
-        <div class="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
-            
-            <div class="text-center md:text-left">
-                <span class="text-lg font-semibold text-gray-700 mr-4">Status:</span>
-                <span id="master-status" class="px-3 py-1 text-sm font-bold rounded-full bg-gray-200 text-gray-800">STOPPED</span>
-            </div>
-            
-            <div class="flex space-x-3">
-                <button id="start-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition duration-150" onclick="sendMasterControl('start')">
-                    <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.26a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    START EXPERIMENT
-                </button>
-                <button id="stop-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl shadow-md transition duration-150" onclick="sendMasterControl('stop')">
-                    <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9h4v6h-4V9z"></path></svg>
-                    STOP ALL
-                </button>
-            </div>
-            
-            <div class="text-center md:text-right text-sm text-gray-500">
-                <p>PID Config: Kp=<span id="cfg-kp">0.25</span>, Ki=<span id="cfg-ki">0.15</span>, Kd=<span id="cfg-kd">0.005</span></p>
-                <p>Setpoint: <span id="cfg-sp">20.0</span> cm | Sample Time: <span id="cfg-st">0.1</span> s</p>
-            </div>
-        </div>
-    </div>
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- Header -->
+        <header class="text-center">
+            <h1 class="text-4xl font-extrabold text-indigo-400 mb-2">IoT Project Dashboard</h1>
+            <p class="text-lg text-gray-400">Real-Time Traffic Scheduling Experiment Interface</p>
+        </header>
 
-    <div class="flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
-        
-        <!-- EXPERIMENT CONTROLS COLUMN -->
-        <div class="lg:w-1/3">
-            <div class="bg-white shadow-lg rounded-xl p-6 border border-gray-200">
-                <h2 class="text-xl font-semibold text-indigo-700 mb-4 border-b pb-2">Experiment Controls</h2>
+        <!-- Status and Controls -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+            
+            <div class="flex flex-col lg:flex-row lg:justify-between lg:items-end space-y-4 lg:space-y-0 lg:space-x-8">
                 
-                <!-- CONGESTION CONTROL -->
-                <div class="mb-6">
-                    <h3 class="text-lg font-medium text-gray-800 mb-2">Network Congestion (Simulated)</h3>
-                    
-                    <label class="block data-label mb-1">Delay (<span id="delay-val">0</span> ms)</label>
-                    <input type="range" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" id="delay-slider" min="0" max="100" value="0" step="1">
-                    
-                    <label class="block data-label mt-4 mb-1">Loss (<span id="loss-val">0.0</span> %)</label>
-                    <input type="range" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" id="loss-slider" min="0" max="20" value="0.0" step="0.1">
-                    
-                    <button class="w-full mt-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 rounded-lg transition duration-150 shadow-md" onclick="applyCongestion()">
-                        APPLY CONGESTION SETTINGS
+                <!-- Status Indicator & Load Type Dropdown -->
+                <div class="flex flex-col space-y-4 w-full lg:w-1/3">
+                    <!-- Status -->
+                    <div class="flex items-center space-x-3">
+                        <div id="status-dot" class="w-4 h-4 rounded-full bg-red-500 shadow-xl shadow-red-500/30 transition-colors duration-500"></div>
+                        <span class="text-2xl font-semibold" id="experiment-status-text">STATUS: STOPPED</span>
+                    </div>
+
+                    <!-- Experiment Scenario Dropdown -->
+                    <div class="space-y-2">
+                        <label for="load-type-select" class="block text-sm font-medium text-gray-400">Experiment Scenario (Network Load)</label>
+                        <select id="load-type-select"
+                                class="w-full bg-gray-700 border border-gray-600 text-white text-md rounded-lg focus:ring-indigo-500 focus:border-indigo-500 p-2.5 shadow-inner">
+                            <option value="none" selected>Baseline (No Background Load)</option>
+                            <option value="iperf">Traffic Load (iPerf/UDP Flood)</option>
+                            <option value="stress">CPU/Memory Load (Stress-ng)</option>
+                        </select>
+                        <p class="text-xs text-gray-500">Select the background activity for the fan node.</p>
+                    </div>
+                </div>
+
+                <!-- Control Buttons -->
+                <div class="flex space-x-3 w-full lg:w-auto justify-center lg:justify-end">
+                    <button id="start-button" 
+                            class="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-full font-bold text-lg transition duration-200 shadow-md shadow-green-600/50 active:scale-95">
+                        Start Experiment
+                    </button>
+                    <button id="stop-button" 
+                            class="px-6 py-3 bg-red-600 hover:bg-red-700 rounded-full font-bold text-lg transition duration-200 shadow-md shadow-red-600/50 active:scale-95">
+                        Stop Experiment
                     </button>
                 </div>
-
-                <!-- SCHEDULER CONTROL -->
-                <div class="mb-6 border-t pt-4">
-                    <h3 class="text-lg font-medium text-gray-800 mb-2">Traffic Scheduler (tc)</h3>
-                    <p class="text-sm text-gray-600 mb-3">Status: <span id="tc-status" class="px-2 py-0.5 text-xs font-semibold rounded bg-gray-200">DISABLED</span></p>
-                    <button id="tc-apply-btn" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 rounded-lg transition duration-150 w-full" onclick="sendSchedulerControl('apply')">APPLY Prioritization Rules</button>
-                    <button id="tc-remove-btn" class="bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-bold py-2 rounded-lg transition duration-150 w-full mt-2" onclick="sendSchedulerControl('remove')">REMOVE Rules (Baseline)</button>
+            </div>
+            
+            <!-- Dynamic Controls (Setpoint & Congestion Sliders) -->
+            <div class="mt-6 pt-4 border-t border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <div class="col-span-full mb-2">
+                    <h3 class="text-lg font-bold text-indigo-400">Dynamic Controls</h3>
+                </div>
+                
+                <!-- Setpoint Slider (NEW) -->
+                <div class="space-y-2 col-span-1">
+                    <div class="flex justify-between items-center">
+                        <label for="setpoint-slider" class="text-lg font-medium text-purple-300">Target Height (Setpoint)</label>
+                        <span id="setpoint-value" class="text-xl font-bold text-purple-400">20.0 cm</span>
+                    </div>
+                    <!-- Range: 15cm (close to fan) to 50cm (far from fan) -->
+                    <input type="range" id="setpoint-slider" min="15" max="50" value="20.0" step="1.0" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer range-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    <p class="text-xs text-gray-400">Desired ball height in **centimeters from the sensor**. (Range: 15-50 cm)</p>
                 </div>
 
-                <!-- LOAD CONTROL -->
-                <div class="border-t pt-4">
-                    <h3 class="text-lg font-medium text-gray-800 mb-2">Background Load Stress</h3>
-                    <p class="text-sm text-gray-600 mb-3">Status: <span id="load-status" class="px-2 py-0.5 text-xs font-semibold rounded bg-gray-200">NONE</span></p>
-                    <div class="grid grid-cols-2 gap-2">
-                        <button class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-lg text-sm" onclick="sendLoadControl('start_iperf')">Start iperf Load</button>
-                        <button class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-lg text-sm" onclick="sendLoadControl('start_stress')">Start Stress Load</button>
-                        <button class="col-span-2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 rounded-lg mt-2" onclick="sendLoadControl('stop_load')">Stop All Background Load</button>
+                <!-- Delay Slider -->
+                <div class="space-y-2 col-span-1">
+                    <div class="flex justify-between items-center">
+                        <label for="delay-slider" class="text-lg font-medium text-indigo-300">Network Delay (Latency)</label>
+                        <span id="delay-value" class="text-xl font-bold text-indigo-400">0 ms</span>
                     </div>
+                    <input type="range" id="delay-slider" min="0" max="100" value="0" step="5" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer range-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <p class="text-xs text-gray-400">Simulated one-way delay added to the control packet.</p>
+                </div>
+                
+                <!-- Loss Slider -->
+                <div class="space-y-2 col-span-1">
+                    <div class="flex justify-between items-center">
+                        <label for="loss-slider" class="text-lg font-medium text-indigo-300">Packet Loss Rate</label>
+                        <span id="loss-value" class="text-xl font-bold text-indigo-400">0.0 %</span>
+                    </div>
+                    <input type="range" id="loss-slider" min="0" max="50" value="0" step="0.5" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer range-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <p class="text-xs text-gray-400">Probability of a control packet being dropped.</p>
                 </div>
             </div>
+
+            <!-- Command Acknowledgment Message Box -->
+            <p id="command-message" class="text-sm mt-4 italic text-center transition-opacity duration-300 opacity-0 h-4"></p>
         </div>
 
-        <!-- MONITORING & GRAPHS COLUMN -->
-        <div class="lg:w-2/3">
-            <div class="bg-white shadow-lg rounded-xl p-6 border border-gray-200">
-                <h2 class="text-xl font-semibold text-indigo-700 mb-4 border-b pb-2">Real-Time Performance</h2>
-                
-                <!-- Top Row of Key Metrics -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                    <div class="text-center p-3 rounded-lg bg-indigo-50">
-                        <p class="data-label">Ball Distance (cm)</p>
-                        <p id="current-distance" class="data-value">0.0</p>
-                    </div>
-                    <div class="text-center p-3 rounded-lg bg-indigo-50">
-                        <p class="data-label">PID Error</p>
-                        <p id="current-error" class="data-value">0.0</p>
-                    </div>
-                    <div class="text-center p-3 rounded-lg bg-indigo-50">
-                        <p class="data-label">Fan Output (%)</p>
-                        <p id="current-duty" class="data-value">0</p>
-                    </div>
-                    <div class="text-center p-3 rounded-lg bg-indigo-50">
-                        <p class="data-label">Measured RPM</p>
-                        <p id="current-rpm" class="data-value">0</p>
-                    </div>
-                </div>
-                
-                <!-- Graphs Row (Fixed Height) -->
-                <div class="space-y-6">
-                    <!-- Sensor Chart (Height vs Setpoint/Error) -->
-                    <div>
-                        <h3 class="font-medium text-gray-700 mb-2">Sensor Node: Control Response</h3>
-                        <div class="chart-container relative">
-                            <canvas id="sensorChart"></canvas>
-                        </div>
-                    </div>
+        <!-- Real-Time Graphs Container -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-                    <!-- Fan Chart (Duty Cycle vs RPM) -->
-                    <div>
-                        <h3 class="font-medium text-gray-700 mb-2">Fan Node: Actuator Performance</h3>
-                        <div class="chart-container relative">
-                            <canvas id="fanChart"></canvas>
-                        </div>
-                    </div>
-                    
-                    <!-- Network Data Indicators (Applied values) -->
-                    <div class="p-3 rounded-lg bg-gray-100 border text-center">
-                        <span class="data-label mr-4">Applied Network Delay: <span id="applied-delay" class="text-xl font-bold text-red-500">5</span> ms</span>
-                        <span class="data-label">Applied Packet Loss: <span id="applied-loss" class="text-xl font-bold text-red-500">0.0</span> %</span>
-                    </div>
-                </div>
+            <!-- Height and Setpoint Chart -->
+            <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 chart-container">
+                <h2 class="text-xl font-bold mb-4 text-indigo-300">Height (cm) &amp; Setpoint</h2>
+                <canvas id="heightChart"></canvas>
+            </div>
+
+            <!-- Fan and RPM Chart -->
+            <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 chart-container">
+                <h2 class="text-xl font-bold mb-4 text-indigo-300">Fan Output (%) &amp; RPM</h2>
+                <canvas id="fanChart"></canvas>
             </div>
         </div>
     </div>
-</div>
 
-<script>
-    // --- Socket.IO Setup ---
-    const socket = io.connect('http://' + document.domain + ':5001');
-    const MAX_DATA_POINTS = 60; // Max points (60 seconds at 1Hz, or 6 seconds at 10Hz)
+    <script>
+        // --- CONFIGURATION ---
+        const CHART_HISTORY_SIZE = 60; // Show the last 60 data points
+        const UPDATE_INTERVAL_MS = 100; // Update the chart every 100ms
+        const SERVER_URL = document.location.origin;
 
-    // --- Chart.js Setup ---
+        // --- DOM ELEMENTS ---
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('experiment-status-text');
+        const loadTypeSelect = document.getElementById('load-type-select'); 
+        const startButton = document.getElementById('start-button');
+        const stopButton = document.getElementById('stop-button');
+        const cmdMessage = document.getElementById('command-message');
+        
+        // Sliders
+        const setpointSlider = document.getElementById('setpoint-slider');
+        const setpointValueSpan = document.getElementById('setpoint-value');
+        const delaySlider = document.getElementById('delay-slider');
+        const delayValueSpan = document.getElementById('delay-value');
+        const lossSlider = document.getElementById('loss-slider');
+        const lossValueSpan = document.getElementById('loss-value');
 
-    // Function to create a standard scrolling chart
-    function createChart(ctx, label1, color1, label2, color2, y1Label, y2Label) {
-        return new Chart(ctx, {
-            type: 'line',
-            data: { labels: [], datasets: [
-                { label: label1, data: [], borderColor: color1, fill: false, yAxisID: 'y' },
-                { label: label2, data: [], borderColor: color2, fill: false, yAxisID: 'y1' }
-            ]},
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 }, // Disable animation for real-time feel
-                scales: {
-                    xAxes: [{ type: 'time', time: { unit: 'second' } }],
-                    y: { type: 'linear', display: true, position: 'left', id: 'y', scaleLabel: { display: true, labelString: y1Label }, ticks: { fontColor: color1 } },
-                    y1: { type: 'linear', display: true, position: 'right', id: 'y1', scaleLabel: { display: true, labelString: y2Label }, gridLines: { drawOnChartArea: false }, ticks: { fontColor: color2 } }
-                },
-                legend: { position: 'top' },
-                tooltips: { mode: 'index', intersect: false },
-                hover: { mode: 'nearest', intersect: true }
+
+        // --- DATA STORAGE ---
+        const dataQueue = {
+            t: [], 
+            height: [],
+            setpoint: [],
+            fanOutput: [], 
+            fanRPM: []
+        };
+        
+        // --- SOCKET.IO SETUP ---
+        const socket = io(SERVER_URL);
+
+        socket.on('connect', () => {
+            console.log('Connected to server via SocketIO');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateStatus('DISCONNECTED', 'gray');
+        });
+        
+        // --- SLIDER CONTROL LOGIC ---
+
+        function sendCongestionUpdate() {
+            const delay_ms = parseInt(delaySlider.value, 10);
+            const loss_rate_perc = parseFloat(lossSlider.value);
+            
+            if (socket.connected) {
+                socket.emit('update_congestion', { 
+                    delay_ms: delay_ms, 
+                    loss_rate_perc: loss_rate_perc 
+                });
+                console.debug(`Sending Congestion: ${delay_ms}ms, ${loss_rate_perc}%`);
+            }
+        }
+        
+        function sendSetpointUpdate() {
+            const setpoint_cm = parseFloat(setpointSlider.value);
+            
+            if (socket.connected) {
+                socket.emit('update_setpoint', { 
+                    setpoint_cm: setpoint_cm
+                });
+                console.log(`Sending Setpoint: ${setpoint_cm} cm`);
+            }
+        }
+
+        // Setpoint Slider Listener (NEW)
+        setpointSlider.addEventListener('input', () => {
+            const val = parseFloat(setpointSlider.value).toFixed(1);
+            setpointValueSpan.textContent = `${val} cm`;
+            sendSetpointUpdate();
+        });
+
+        // Delay Slider Listener
+        delaySlider.addEventListener('input', () => {
+            const val = delaySlider.value;
+            delayValueSpan.textContent = `${val} ms`;
+            sendCongestionUpdate();
+        });
+
+        // Loss Slider Listener
+        lossSlider.addEventListener('input', () => {
+            const val = parseFloat(lossSlider.value).toFixed(1);
+            lossValueSpan.textContent = `${val} %`;
+            sendCongestionUpdate();
+        });
+
+
+        // --- UTILITY: Data Queuing ---
+        function queueData(source, data) {
+            // 1. Generate a unique time label for this new data point (with milliseconds)
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+            dataQueue.t.push(timeLabel);
+
+            // 2. Queue data, using NaN for data points not present in this packet type
+            let h = NaN, sp = NaN, fO = NaN, fR = NaN;
+            
+            if (source === 'sensor') {
+                h = data.height;
+                sp = data.setpoint;
+                fO = data.output; // PID Output is the commanded duty cycle
+            } 
+            
+            else if (source === 'fan') {
+                fR = data.rpm;
+                fO = data.duty; // Measured duty cycle (telemetry)
+            }
+            
+            // Push all five values, ensuring NaN is used for gaps
+            dataQueue.height.push(h);
+            dataQueue.setpoint.push(sp);
+            dataQueue.fanOutput.push(fO);
+            dataQueue.fanRPM.push(fR);
+        }
+        
+        // --- SOCKET.IO HANDLERS (Data Reception) ---
+        
+        // 1. STATUS UPDATE HANDLER
+        socket.on('experiment_status', (data) => {
+            const status = data.status;
+            console.log('Received Status:', status);
+            if (status === 'running') {
+                updateStatus('RUNNING', 'green');
+            } else if (status === 'stopped') {
+                updateStatus('STOPPED', 'red');
+            } else if (status === 'error') { // FIX: Explicitly handle ERROR status
+                updateStatus('ERROR', 'amber');
             }
         });
-    }
-
-    // 1. Sensor Chart (Distance, Setpoint, Error)
-    const sensorCtx = document.getElementById('sensorChart').getContext('2d');
-    const sensorChart = createChart(sensorCtx, 
-        'Measured Height h(t) (cm)', 'rgb(75, 192, 192)', 
-        'PID Error', 'rgb(255, 99, 132)', 
-        'Height (cm)', 'Error');
-    // Add Setpoint (as a target line on the primary Y-axis)
-    sensorChart.data.datasets.push({
-        label: 'Setpoint hSP(t) (cm)',
-        data: [],
-        borderColor: 'rgb(255, 165, 0)',
-        borderDash: [5, 5],
-        fill: false,
-        yAxisID: 'y'
-    });
-
-
-    // 2. Fan Chart (Duty Cycle, RPM)
-    const fanCtx = document.getElementById('fanChart').getContext('2d');
-    const fanChart = createChart(fanCtx,
-        'Commanded Duty (%)', 'rgb(54, 162, 235)',
-        'Measured RPM', 'rgb(255, 159, 64)',
-        'Duty Cycle (%)', 'RPM');
-
-
-    // --- Data Handlers ---
-
-    socket.on('realtime_data', function(data) {
-        // Use current time for labeling since the controller timestamp might be slightly off
-        const timestamp = new Date(); 
         
-        // --- Sensor Chart Update ---
-        if (sensorChart.data.labels.length >= MAX_DATA_POINTS) {
-            sensorChart.data.labels.shift();
-            sensorChart.data.datasets.forEach(dataset => dataset.data.shift());
+        // 2. FAN DATA HANDLER (RPM, Duty Cycle)
+        socket.on('fan', (data) => {
+            if (data.rpm !== undefined && data.duty !== undefined) {
+                queueData('fan', data);
+            }
+        });
+
+        // 3. SENSOR/PID DATA HANDLER (Height, Setpoint, PID Output)
+        socket.on('sensor', (data) => {
+            if (data.height !== undefined && data.setpoint !== undefined && data.output !== undefined) {
+                queueData('sensor', data);
+            }
+        });
+
+        // 4. COMMAND ACKNOWLEDGEMENT
+        socket.on('command_ack', (data) => {
+            showMessage(data.message, data.success ? 'text-green-400' : 'text-red-400');
+        });
+
+        // --- UI UTILITIES ---
+
+        function updateStatus(text, color) {
+            // color should be one of Tailwind's colors (e.g., 'red', 'green', 'amber', 'gray')
+            statusText.textContent = `STATUS: ${text}`;
+            statusDot.className = `w-4 h-4 rounded-full bg-${color}-500 shadow-xl shadow-${color}-500/30 transition-colors duration-500`;
+        }
+        
+        function showMessage(message, colorClass) {
+            cmdMessage.textContent = message;
+            cmdMessage.className = `text-sm mt-4 italic text-center transition-opacity duration-300 opacity-100 ${colorClass}`;
+            setTimeout(() => {
+                cmdMessage.className = cmdMessage.className.replace('opacity-100', 'opacity-0');
+            }, 3000);
         }
 
-        sensorChart.data.labels.push(timestamp);
-        sensorChart.data.datasets[0].data.push(data.sensor.distance); // Distance
-        sensorChart.data.datasets[1].data.push(data.sensor.pid_error); // Error
-        sensorChart.data.datasets[2].data.push(data.sensor.setpoint); // Setpoint
-        sensorChart.update();
+        // --- BUTTON HANDLERS ---
 
-        // Update indicators
-        document.getElementById('current-distance').innerText = data.sensor.distance.toFixed(2);
-        document.getElementById('current-error').innerText = data.sensor.pid_error.toFixed(3);
+        startButton.addEventListener('click', () => {
+            const selectedLoadType = loadTypeSelect.value;
+            
+            // Send the selected load type to the master controller
+            socket.emit('start_experiment', { load_type: selectedLoadType });
+            
+            showMessage(`Sending START command for Scenario: ${selectedLoadType.toUpperCase()}...`, 'text-yellow-400');
+        });
+
+        stopButton.addEventListener('click', () => {
+            socket.emit('stop_experiment');
+            showMessage('Sending STOP command...', 'text-yellow-400');
+        });
+
+        // --- CHART INITIALIZATION (Unchanged) ---
         
-        // Update Network Status Indicators
-        document.getElementById('applied-delay').innerText = (data.sensor.applied_delay_s * 1000).toFixed(0);
-        document.getElementById('applied-loss').innerText = data.sensor.applied_loss_p.toFixed(1);
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'category',
+                    title: { display: true, text: 'Time (HH:MM:SS.ms)', color: '#9CA3AF' },
+                    grid: { color: 'rgba(100, 100, 100, 0.2)' },
+                    ticks: { color: '#9CA3AF', maxRotation: 45, minRotation: 45 }
+                }
+            },
+            plugins: {
+                legend: { labels: { color: '#D1D5DB' } }
+            }
+        };
 
+        const heightChartCtx = document.getElementById('heightChart').getContext('2d');
+        const heightChart = new Chart(heightChartCtx, {
+            type: 'line',
+            data: {
+                labels: dataQueue.t,
+                datasets: [
+                    {
+                        label: 'Measured Height (cm)',
+                        data: dataQueue.height,
+                        borderColor: '#3B82F6', 
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Setpoint (cm)',
+                        data: dataQueue.setpoint,
+                        borderColor: '#EF4444', 
+                        borderDash: [5, 5],
+                        tension: 0.2,
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: chartOptions
+        });
 
-        // --- Fan Chart Update ---
-        if (fanChart.data.labels.length >= MAX_DATA_POINTS) {
-            fanChart.data.labels.shift();
-            fanChart.data.datasets.forEach(dataset => dataset.data.shift());
+        const fanChartCtx = document.getElementById('fanChart').getContext('2d');
+        const fanChart = new Chart(fanChartCtx, {
+            type: 'line',
+            data: {
+                labels: dataQueue.t,
+                datasets: [
+                    {
+                        label: 'Fan Output (%)',
+                        data: dataQueue.fanOutput,
+                        borderColor: '#10B981', 
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.2,
+                        fill: false,
+                        yAxisID: 'y_percent',
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Fan RPM',
+                        data: dataQueue.fanRPM,
+                        borderColor: '#F59E0B', 
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        tension: 0.2,
+                        fill: false,
+                        yAxisID: 'y_rpm',
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                ...chartOptions,
+                scales: {
+                    ...chartOptions.scales,
+                    y_rpm: {
+                        position: 'right',
+                        min: 0,
+                        max: 6000, 
+                        title: { display: true, text: 'RPM', color: '#F59E0B' },
+                        grid: { drawOnChartArea: false }, 
+                        ticks: { color: '#F59E0B' }
+                    },
+                    y_percent: {
+                        position: 'left',
+                        min: 0,
+                        max: 100, 
+                        title: { display: true, text: 'Output (%)', color: '#9CA3AF' },
+                        grid: { color: 'rgba(100, 100, 100, 0.2)' },
+                        ticks: { color: '#9CA3AF' }
+                    },
+                    x: chartOptions.scales.x 
+                }
+            }
+        });
+
+        // --- REAL-TIME CHART UPDATE LOOP ---
+
+        function updateCharts() {
+            // Keep arrays constrained to history size
+            while (dataQueue.t.length > CHART_HISTORY_SIZE) {
+                for (const key in dataQueue) {
+                    if (dataQueue.hasOwnProperty(key)) {
+                        dataQueue[key].shift();
+                    }
+                }
+            }
+
+            // Update Chart.js data
+            heightChart.data.labels = dataQueue.t;
+            heightChart.data.datasets[0].data = dataQueue.height;
+            heightChart.data.datasets[1].data = dataQueue.setpoint;
+
+            fanChart.data.labels = dataQueue.t;
+            fanChart.data.datasets[0].data = dataQueue.fanOutput;
+            fanChart.data.datasets[1].data = dataQueue.fanRPM;
+
+            // Animate and draw
+            heightChart.update('none'); 
+            fanChart.update('none');
         }
 
-        fanChart.data.labels.push(timestamp);
-        fanChart.data.datasets[0].data.push(data.fan.duty_cycle); // Duty Cycle (from sensor output)
-        fanChart.data.datasets[1].data.push(data.fan.measured_rpm); // Measured RPM
-        fanChart.update();
+        // Set up the recurring timer to update the charts
+        setInterval(updateCharts, UPDATE_INTERVAL_MS);
 
-        // Update indicators
-        document.getElementById('current-duty').innerText = data.sensor.pid_output.toFixed(1); // Using sensor's PID output
-        document.getElementById('current-rpm').innerText = data.fan.measured_rpm.toFixed(0);
-    });
-
-    socket.on('update_state', function(state) {
-        // --- General State Updates ---
-        const statusEl = document.getElementById('master-status');
-        statusEl.innerText = state.status.toUpperCase();
-        statusEl.className = `px-3 py-1 text-sm font-bold rounded-full ${state.status === 'running' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-800'}`;
-
-        const tcStatusEl = document.getElementById('tc-status');
-        tcStatusEl.innerText = state.tc_enabled ? 'APPLIED' : 'DISABLED';
-        tcStatusEl.className = `px-2 py-0.5 text-xs font-semibold rounded ${state.tc_enabled ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-200'}`;
+        // Initialize status on load
+        updateStatus('STOPPED', 'red');
         
-        const loadStatusEl = document.getElementById('load-status');
-        loadStatusEl.innerText = state.load_test_running.toUpperCase();
-        loadStatusEl.className = `px-2 py-0.5 text-xs font-semibold rounded ${state.load_test_running !== 'none' ? 'bg-red-100 text-red-700' : 'bg-gray-200'}`;
+        // Initialize setpoint value on load
+        const initialSetpoint = parseFloat(setpointSlider.value).toFixed(1);
+        setpointValueSpan.textContent = `${initialSetpoint} cm`;
 
-        // --- Config Updates ---
-        document.getElementById('cfg-kp').innerText = state.config.Kp;
-        document.getElementById('cfg-ki').innerText = state.config.Ki;
-        document.getElementById('cfg-kd').innerText = state.config.Kd;
-        document.getElementById('cfg-sp').innerText = state.config.SETPOINT;
-        document.getElementById('cfg-st').innerText = state.config.SAMPLE_TIME;
-
-        // --- Congestion UI Updates (Sliders reflect current APPLIED settings) ---
-        const delay_ms = state.net_delay_ms;
-        const loss_perc = state.packet_loss_percent;
-
-        document.getElementById('delay-slider').value = delay_ms;
-        document.getElementById('delay-val').innerText = delay_ms.toFixed(0);
-        document.getElementById('loss-slider').value = loss_perc;
-        document.getElementById('loss-val').innerText = loss_perc.toFixed(1);
-    });
-
-    // --- Control Functions ---
-    
-    // Sliders for visual feedback
-    document.getElementById('delay-slider').oninput = function() {
-        document.getElementById('delay-val').innerText = this.value;
-    }
-    document.getElementById('loss-slider').oninput = function() {
-        document.getElementById('loss-val').innerText = parseFloat(this.value).toFixed(1);
-    }
-
-    function sendMasterControl(command) {
-        socket.emit('control_master', { command: command });
-    }
-
-    function applyCongestion() {
-        const delay = document.getElementById('delay-slider').value;
-        const loss = document.getElementById('loss-slider').value;
-        socket.emit('control_congestion', { delay: delay, loss: loss });
-    }
-
-    function sendSchedulerControl(command) {
-        socket.emit('control_scheduler', { command: command });
-    }
-
-    function sendLoadControl(command) {
-        socket.emit('control_load', { command: command });
-    }
-</script>
-
+    </script>
 </body>
 </html>
