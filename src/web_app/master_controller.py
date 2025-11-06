@@ -1,305 +1,174 @@
-import threading
-import time
-import socket
-import json
-import subprocess
-import logging
 import os
-from flask import Flask, request, render_template
+import json
+import time
+import math
+import logging
+from threading import Thread, Event
+
+# Third-party libraries
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
-# Set up logging for the master controller
-logging.basicConfig(level=logging.INFO, format='[MASTER] %(levelname)s: %(message)s')
+# --- CONFIGURATION PATHS ---
+NETWORK_CONFIG_PATH = '/opt/project/common/network_config.json'
+
+# --- LOGGING SETUP ---
+# Set up logging with the desired [Master] prefix
+logging.basicConfig(level=logging.INFO, format='[Master] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
-
-# --- STATIC CONFIGURATION (Fixed Values) ---
-STATIC_INTERFACE = 'wlan0'
-STATIC_FAN_NODE_IP = '192.168.22.1'
-
-# --- NETWORK CONFIGURATION ---
-DATA_LISTEN_IP = '0.0.0.0'
-DATA_LISTEN_PORT = 5006  # For real-time sensor and fan data
-STATUS_LISTEN_IP = '0.0.0.0'
-STATUS_LISTEN_PORT = 5007  # For experiment status updates (running/stopped)
-WEB_SERVER_PORT = 8000
-CONGESTION_CONFIG_FILE = 'congestion_config.json'
-SETPOINT_CONFIG_FILE = 'setpoint_config.json' # New file for setpoint control
-
-# Path to the experiment manager script
-EXPERIMENT_MANAGER_SCRIPT = './experiment_manager.sh' 
 
 # --- FLASK & SOCKETIO SETUP ---
 app = Flask(__name__) 
-socketio = SocketIO(app, 
-                    cors_allowed_origins="*", 
-                    logger=True, 
-                    engineio_logger=True,
-                    async_mode='threading' 
-) 
+# Suppress Werkzeug logs for cleaner output during SocketIO run
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
-# Shared event for signaling thread termination
-stop_event = threading.Event()
+# Use simple threading for SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# --- INITIALIZE CONFIG FILES ---
-def initialize_congestion_config():
-    """Ensures the congestion config file exists with default values."""
-    default_config = {
-        "delay_ms": 0,
-        "loss_rate_perc": 0.0
-    }
-    if not os.path.exists(CONGESTION_CONFIG_FILE):
-        try:
-            with open(CONGESTION_CONFIG_FILE, 'w') as f:
-                json.dump(default_config, f, indent=4)
-            logger.info(f"Initialized {CONGESTION_CONFIG_FILE} with default values.")
-        except IOError as e:
-            logger.error(f"Failed to write initial config file: {e}")
+# --- DATA STORES (Placeholder for real-time data) ---
+# Last known status of the system
+system_status = {
+    "last_update": "N/A",
+    "pid_setpoint": 20.0,
+    "current_height": 0.0,
+    "fan_output": 0,
+    "fan_rpm": 0,
+    "delay": 0.0,
+    "loss_rate": 0.0
+}
 
-def initialize_setpoint_config():
-    """Ensures the setpoint config file exists with default value (20cm)."""
-    # The default value must match the initial SETPOINT in sensor_PIDcontroller.py
-    default_config = {
-        "setpoint_cm": 20.0
-    }
-    if not os.path.exists(SETPOINT_CONFIG_FILE):
-        try:
-            with open(SETPOINT_CONFIG_FILE, 'w') as f:
-                json.dump(default_config, f, indent=4)
-            logger.info(f"Initialized {SETPOINT_CONFIG_FILE} with default setpoint.")
-        except IOError as e:
-            logger.error(f"Failed to write initial setpoint config file: {e}")
+# Define a placeholder port for the Telemetry Listener for logging purposes
+TELEMETRY_PORT = 5006 
 
-# --- SOCKETIO COMMAND HANDLERS ---
-
-@socketio.on('start_experiment')
-def handle_start_experiment(data):
-    """Handles the START command from the web client."""
-    
-    load_type = data.get('load_type', 'none') 
-
-    interface = STATIC_INTERFACE
-    fan_node_ip = STATIC_FAN_NODE_IP
-    
-    command = [
-        'sudo', 'bash', EXPERIMENT_MANAGER_SCRIPT, 
-        'run', load_type, interface, fan_node_ip
-    ]
-
-    logger.info(f"Executing START command with LOAD_TYPE: {load_type} -> {' '.join(command)}")
-    
+def load_config():
+    """Loads and returns network configuration from the JSON file."""
     try:
-        subprocess.Popen(command, 
-                         stdout=subprocess.PIPE, 
-                         stderr=subprocess.STDOUT)
-        
-        emit('command_ack', {
-            'success': True,
-            'message': f"Experiment start signal sent. Scenario: {load_type.capitalize()}"
-        })
-        
+        if os.path.exists(NETWORK_CONFIG_PATH):
+            with open(NETWORK_CONFIG_PATH, 'r') as f:
+                return json.load(f)
+        else:
+            logger.warning(f"Network config file not found at {NETWORK_CONFIG_PATH}. Using defaults.")
+            return {}
     except Exception as e:
-        logger.error(f"Error starting experiment: {e}")
-        emit('command_ack', {
-            'success': False,
-            'message': f"Error starting experiment: {str(e)}"
-        })
+        logger.error(f"Could not load network config at {NETWORK_CONFIG_PATH}. Using defaults. Error: {e}")
+        return {}
 
+# --- SOCKETIO EVENT HANDLERS ---
 
-@socketio.on('stop_experiment')
-def handle_stop_experiment():
-    """Handles the STOP command from the web client."""
-    
-    command = ['sudo', 'bash', EXPERIMENT_MANAGER_SCRIPT, 'teardown']
+@socketio.on('connect')
+def handle_connect():
+    """Handles new client connection."""
+    logger.info("Client connected to dashboard.")
+    # Emit initial status upon connection
+    emit('status_update', system_status)
 
-    logger.info(f"Executing STOP command: {' '.join(command)}")
+@socketio.on('request_status')
+def handle_status_request():
+    """Responds to client requests for the current status."""
+    emit('status_update', system_status)
 
+@socketio.on('set_setpoint')
+def handle_setpoint_change(data):
+    """Handles a request to change the PID setpoint."""
     try:
-        subprocess.Popen(command, 
-                         stdout=subprocess.PIPE, 
-                         stderr=subprocess.STDOUT)
-                         
-        emit('command_ack', {
-            'success': True,
-            'message': "Experiment teardown initiated."
-        })
-        
-    except Exception as e:
-        logger.error(f"Error stopping experiment: {e}")
-        emit('command_ack', {
-            'success': False,
-            'message': f"Error stopping experiment: {str(e)}"
-        })
+        new_setpoint = float(data.get('setpoint', system_status['pid_setpoint']))
+        # In a real system, this would send a command to the PID controller process
+        if 5.0 <= new_setpoint <= 50.0:
+            system_status['pid_setpoint'] = new_setpoint
+            logger.info(f"Setpoint updated to: {new_setpoint} cm")
+            emit('status_update', system_status, broadcast=True)
+            return {"status": "ok", "message": f"Setpoint set to {new_setpoint} cm"}
+        else:
+            return {"status": "error", "message": "Setpoint must be between 5.0 and 50.0 cm."}
+    except ValueError:
+        return {"status": "error", "message": "Invalid setpoint value."}
 
-@socketio.on('update_congestion')
-def handle_congestion_update(data):
-    """Receives slider values and updates the configuration file for the PID script."""
-    delay_ms = data.get('delay_ms', 0)
-    loss_rate_perc = data.get('loss_rate_perc', 0.0)
-    
-    new_config = {
-        "delay_ms": delay_ms,
-        "loss_rate_perc": loss_rate_perc
-    }
-
+@socketio.on('set_congestion')
+def handle_congestion_change(data):
+    """Handles a request to change network congestion settings."""
     try:
-        with open(CONGESTION_CONFIG_FILE, 'w') as f:
-            json.dump(new_config, f, indent=4)
+        # In a real system, this would modify the global variables in network_injector.py
+        new_delay = float(data.get('delay', system_status['delay']))
+        new_loss = float(data.get('loss_rate', system_status['loss_rate']))
         
-        logger.debug(f"Updated congestion config: Delay={delay_ms}ms, Loss={loss_rate_perc}%")
-        
-    except Exception as e:
-        logger.error(f"Failed to update congestion config file: {e}")
+        # Validation (example limits)
+        if 0.0 <= new_delay <= 0.2 and 0.0 <= new_loss <= 100.0:
+            system_status['delay'] = new_delay
+            system_status['loss_rate'] = new_loss
+            logger.info(f"Congestion updated: Delay={new_delay}s, Loss={new_loss}%")
+            emit('status_update', system_status, broadcast=True)
+            return {"status": "ok", "message": "Congestion parameters updated."}
+        else:
+            return {"status": "error", "message": "Delay must be 0-0.2s, Loss must be 0-100%."}
+    except ValueError:
+        return {"status": "error", "message": "Invalid congestion value."}
 
-
-@socketio.on('update_setpoint')
-def handle_setpoint_update(data):
-    """Receives the new setpoint value (cm) and updates the config file."""
-    setpoint_cm = float(data.get('setpoint_cm', 20.0))
-    
-    new_config = {
-        "setpoint_cm": setpoint_cm
-    }
-
-    try:
-        with open(SETPOINT_CONFIG_FILE, 'w') as f:
-            json.dump(new_config, f, indent=4)
-        
-        logger.info(f"Updated setpoint config: Setpoint={setpoint_cm} cm.")
-        
-        # Optional: Send a success message back to the UI, though it updates itself
-        emit('command_ack', {
-            'success': True,
-            'message': f"Setpoint updated to {setpoint_cm} cm."
-        })
-        
-    except Exception as e:
-        logger.error(f"Failed to update setpoint config file: {e}")
-        emit('command_ack', {
-            'success': False,
-            'message': f"Error updating setpoint: {str(e)}"
-        })
-
-
-# --- FLASK ROUTE ---
+# --- FLASK ROUTES ---
 
 @app.route('/')
 def index():
-    """Renders the index.html template from the templates folder."""
-    try:
-        return render_template('index.html')
-    except Exception as e:
-        logger.error(f"Error rendering index.html template: {e}")
-        return f"Internal Server Error: Could not load dashboard. Error: {e}", 500
+    """Serves the main dashboard page using the external template."""
+    return render_template('index.html')
 
+# --- POLLER THREAD (Simulates data fetching from PID loop) ---
 
-# --- UDP LISTENER THREADS (Unchanged) ---
+stop_event = Event()
 
-def udp_data_listener():
-    """Listens for real-time sensor/fan data on UDP_LISTEN_PORT and forwards via SocketIO."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind((DATA_LISTEN_IP, DATA_LISTEN_PORT))
-        logger.info(f"UDP Data Listener bound to {DATA_LISTEN_IP}:{DATA_LISTEN_PORT}")
-    except Exception as e:
-        logger.error(f"Failed to bind UDP data listener: {e}")
-        return
-
-    sock.settimeout(0.1)
-
+def status_poller():
+    """Thread that periodically updates system_status and emits it to clients."""
     while not stop_event.is_set():
-        try:
-            data, addr = sock.recvfrom(1024)
-            message = data.decode('utf-8')
-            
-            try:
-                payload = json.loads(message)
-                msg_type = payload.get('type')
-                
-                if msg_type in ['sensor', 'fan']:
-                    with app.app_context():
-                        socketio.emit(msg_type, payload)
-                else:
-                    logger.warning(f"Received unknown data type: {msg_type}")
-                    
-            except json.JSONDecodeError:
-                logger.warning(f"Received non-JSON UDP data: {message}")
+        # --- SIMULATION/MOCK DATA UPDATE ---
+        current_time = time.time()
+        
+        # Simple oscillation for demonstration purposes
+        setpoint = system_status['pid_setpoint']
+        system_status['current_height'] = setpoint + 1.5 * math.sin(current_time / 4.0)
+        system_status['fan_output'] = (setpoint * 2) + 10 * math.cos(current_time / 2.5) 
+        system_status['fan_output'] = max(0, min(100, system_status['fan_output'])) # Clamp to 0-100
+        system_status['fan_rpm'] = int(system_status['fan_output'] * 15) # Mock RPM
+        system_status['last_update'] = time.strftime('%H:%M:%S')
 
-        except socket.timeout:
-            continue
-        except Exception as e:
-            logger.error(f"Error in UDP data listener: {e}")
-            break
+        # Emit the new status to all connected clients
+        socketio.emit('status_update', system_status)
+        
+        time.sleep(1.0) # Update rate: 1 second
 
-    sock.close()
-    logger.info("UDP Data Listener shut down.")
+poller_thread = Thread(target=status_poller)
 
 
-def udp_status_listener():
-    """Listens for simple status updates on STATUS_LISTEN_PORT and forwards via SocketIO."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind((STATUS_LISTEN_IP, STATUS_LISTEN_PORT))
-        logger.info(f"UDP Status Listener bound to {STATUS_LISTEN_IP}:{STATUS_LISTEN_PORT}")
-    except Exception as e:
-        logger.error(f"Failed to bind UDP status listener: {e}")
-        return
-
-    sock.settimeout(0.1)
-
-    while not stop_event.is_set():
-        try:
-            data, addr = sock.recvfrom(1024)
-            status = data.decode('utf-8').strip().lower()
-
-            if status in ['running', 'stopped', 'error']:
-                with app.app_context():
-                    socketio.emit('experiment_status', {'status': status})
-                    logger.info(f"Emitted new status: {status}")
-            else:
-                logger.warning(f"Received invalid status message: {status}")
-
-        except socket.timeout:
-            continue
-        except Exception as e:
-            logger.error(f"Error in UDP status listener: {e}")
-            break
-
-    sock.close()
-    logger.info("UDP Status Listener shut down.")
-
+# --- MAIN EXECUTION ---
 
 def main():
-    initialize_congestion_config()
-    initialize_setpoint_config() # Initialize the new setpoint config
-    logger.info("Starting UDP listeners in background threads...")
-    
-    data_thread = threading.Thread(target=udp_data_listener, daemon=True)
-    status_thread = threading.Thread(target=udp_status_listener, daemon=True)
-    
-    data_thread.start()
-    status_thread.start()
-    
-    logger.info(f"Starting Flask-SocketIO Web Server on port {WEB_SERVER_PORT}...")
-    
+    """Loads config and starts the Flask/SocketIO server."""
+    config = load_config()
+
+    # Read network details from config
+    web_app_ip = config.get('WEB_APP_IP', '0.0.0.0')
+    web_app_port = config.get('WEB_SERVER_PORT', 8000)
+    fan_ip = config.get('FAN_NODE_IP', '192.168.22.1')
+    fan_port = config.get('FAN_PORT', 5005)
+    sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
+
+    # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
+    logger.info("Configuration loaded:")
+    logger.info(f"  Status Listener: {web_app_ip}:{web_app_port}") 
+    logger.info(f"  Telemetry Listener: {web_app_ip}:{TELEMETRY_PORT}")
+    logger.info(f"  Fan IP: {fan_ip}:{fan_port}")
+
+    # Start the data poller thread
+    poller_thread.start()
+
+    logger.info(f"Master Controller is running. Access the dashboard at: http://{sensor_ip}:{web_app_port}")
+
     try:
-        socketio.run(app, 
-                     host='0.0.0.0', 
-                     port=WEB_SERVER_PORT, 
-                     debug=False,
-                     allow_unsafe_werkzeug=True 
-        )
-        
+        # allow_unsafe_werkzeug=True is useful in some containerized/embedded environments
+        socketio.run(app, host=web_app_ip, port=web_app_port, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received. Shutting down...")
-    except Exception as e:
-        logger.error(f"Fatal error running web server: {e}")
-        
+        logger.info("Controller stopped manually.")
     finally:
         stop_event.set()
-        data_thread.join(timeout=2)
-        status_thread.join(timeout=2)
-        logger.info("All threads stopped. Master Controller exiting.")
-
+        poller_thread.join()
+        logger.info("Sockets closed. Clean exit.")
 
 if __name__ == '__main__':
     main()

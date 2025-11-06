@@ -196,7 +196,7 @@ def read_fan_rpm():
     """Reads the fan's measured RPM."""
     if bus is None:
         return 0
-        
+
     try:
         if hardware_mode == "CircuitPython":
             # CircuitPython read placeholder
