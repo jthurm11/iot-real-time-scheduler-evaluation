@@ -319,9 +319,9 @@ def main():
     sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
     
     # Load the actual telemetry listener port from config
+    global TELEMETRY_PORT
     telemetry_listen_port = config.get('SENSOR_DATA_LISTEN_PORT', TELEMETRY_PORT)
     # Update the global placeholder for correct logging
-    global TELEMETRY_PORT
     TELEMETRY_PORT = telemetry_listen_port
 
     # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
