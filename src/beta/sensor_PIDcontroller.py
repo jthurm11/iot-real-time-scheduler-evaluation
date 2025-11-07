@@ -32,7 +32,7 @@ try:
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     
-    # Use default pins from partner's script
+    # Set sensor pins
     TRIG_PIN = 23
     ECHO_PIN = 24
     

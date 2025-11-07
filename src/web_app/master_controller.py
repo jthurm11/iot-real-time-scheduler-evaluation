@@ -3,6 +3,7 @@ import json
 import time
 import math
 import logging
+import socket
 from threading import Thread, Event
 
 # Third-party libraries
@@ -36,7 +37,7 @@ system_status = {
     "last_update": "N/A",
     "pid_setpoint": 20.0,
     "current_height": 0.0,
-    "fan_output": 0,
+    "fan_output": 0.0, # Changed to float for consistency
     "fan_rpm": 0,
     "delay": 0.0,
     "loss_rate": 0.0
@@ -44,6 +45,8 @@ system_status = {
 
 # Define a placeholder port for the Telemetry Listener for logging purposes
 TELEMETRY_PORT = 5006
+
+# --- CONFIGURATION & INIT ---
 
 def load_config():
     """Loads and returns network configuration from the JSON file."""
@@ -174,7 +177,7 @@ def handle_congestion_update(data):
         except ValueError:
             emit('command_ack', {'message': "Invalid delay/loss value.", 'success': False})
 
-# --- PERIODIC STATUS POLLER THREAD ---
+# --- THREAD CONTROL EVENT (Used by Poller and Listener) ---
 stop_event = Event()
 
 def status_poller():
@@ -224,6 +227,66 @@ def status_poller():
 poller_thread = Thread(target=status_poller)
 
 
+# --- TELEMETRY LISTENER THREAD ---
+def telemetry_listener(host, port):
+    """
+    UDP server to listen for real-time telemetry updates (height, fan output, RPM) 
+    from the Sensor/PID node. Updates the global system_status.
+    """
+    BUFFER_SIZE = 1024
+    TIMEOUT = 0.5 # Wait time for new packets
+
+    try:
+        # 1. Setup UDP Socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((host, port))
+        sock.settimeout(TIMEOUT)
+        logger.info(f"Telemetry Listener started on UDP {host}:{port}")
+    except Exception as e:
+        logger.error(f"Failed to start Telemetry Listener on {host}:{port}: {e}")
+        return
+
+    # 2. Main Loop
+    while not stop_event.is_set():
+        try:
+            data, addr = sock.recvfrom(BUFFER_SIZE)
+            
+            # Decode the received JSON string
+            telemetry_data = json.loads(data.decode('utf-8'))
+            
+            # --- UPDATE GLOBAL STATUS ---
+            # Update values if present in the received telemetry
+            current_height = telemetry_data.get("current_height")
+            fan_output = telemetry_data.get("fan_output")
+            fan_rpm = telemetry_data.get("fan_rpm")
+            
+            if current_height is not None:
+                system_status['current_height'] = current_height
+            if fan_output is not None:
+                system_status['fan_output'] = fan_output
+            if fan_rpm is not None:
+                system_status['fan_rpm'] = fan_rpm
+
+            # Log the reception of data (using DEBUG level to prevent log spam)
+            logger.debug(f"Telemetry received from {addr[0]}. H: {system_status['current_height']:.1f}cm, Fan: {system_status['fan_output']:.1f}%")
+            
+        except socket.timeout:
+            # Expected when no packet is received within the TIMEOUT period
+            continue 
+        except socket.error as e:
+            logger.warning(f"Socket error in telemetry listener: {e}")
+            time.sleep(1) # Slow down on persistent error
+        except json.JSONDecodeError:
+            logger.warning(f"Received malformed JSON data in telemetry listener.")
+        except Exception as e:
+            logger.error(f"Unexpected error in telemetry listener loop: {e}")
+            time.sleep(1)
+            
+    # 3. Clean up
+    logger.info("Telemetry Listener thread stopping.")
+    sock.close()
+
+
 # --- MAIN EXECUTION ---
 
 def main():
@@ -254,6 +317,12 @@ def main():
     fan_ip = config.get('FAN_NODE_IP', '192.168.22.1')
     fan_port = config.get('FAN_COMMAND_PORT', 5005)
     sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
+    
+    # Load the actual telemetry listener port from config
+    telemetry_listen_port = config.get('SENSOR_DATA_LISTEN_PORT', TELEMETRY_PORT)
+    # Update the global placeholder for correct logging
+    global TELEMETRY_PORT
+    TELEMETRY_PORT = telemetry_listen_port
 
     # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
     logger.info("Configuration loaded:")
@@ -261,8 +330,13 @@ def main():
     logger.info(f"  Telemetry Listener: {web_app_ip}:{TELEMETRY_PORT}")
     logger.info(f"  Fan IP: {fan_ip}:{fan_port}")
 
-    # Start the data poller thread
+    # Start the data poller thread (emits system_status to dashboard clients)
     poller_thread.start()
+    
+    # Start the telemetry receiver thread (updates system_status from Sensor node)
+    telemetry_thread = Thread(target=telemetry_listener, args=(web_app_ip, telemetry_listen_port))
+    telemetry_thread.daemon = True
+    telemetry_thread.start()
 
     logger.info(f"Master Controller is running. Access the dashboard at: http://{sensor_ip}:{web_app_port}")
 
@@ -276,6 +350,7 @@ def main():
     finally:
         stop_event.set()
         poller_thread.join()
+        telemetry_thread.join() # Ensure the telemetry thread is joined on exit
         logger.info("Sockets closed. Clean exit.")
 
 if __name__ == '__main__':
