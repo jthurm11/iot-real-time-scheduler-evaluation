@@ -43,9 +43,6 @@ system_status = {
     "loss_rate": 0.0
 }
 
-# Define a placeholder port for the Telemetry Listener for logging purposes
-TELEMETRY_PORT = 5006
-
 # --- CONFIGURATION & INIT ---
 
 def load_config():
@@ -319,9 +316,9 @@ def main():
     sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
     
     # Load the actual telemetry listener port from config
-    global TELEMETRY_PORT
-    telemetry_listen_port = config.get('SENSOR_DATA_LISTEN_PORT', TELEMETRY_PORT)
+    telemetry_listen_port = config.get('SENSOR_DATA_LISTEN_PORT', 5006)
     # Update the global placeholder for correct logging
+    global TELEMETRY_PORT
     TELEMETRY_PORT = telemetry_listen_port
 
     # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
