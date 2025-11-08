@@ -316,10 +316,8 @@ def main():
     sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
     
     # Load the actual telemetry listener port from config
-    telemetry_listen_port = config.get('SENSOR_DATA_LISTEN_PORT', 5006)
-    # Update the global placeholder for correct logging
     global TELEMETRY_PORT
-    TELEMETRY_PORT = telemetry_listen_port
+    TELEMETRY_PORT = config.get('SENSOR_DATA_LISTEN_PORT', 5006)
 
     # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
     logger.info("Configuration loaded:")
@@ -331,7 +329,7 @@ def main():
     poller_thread.start()
     
     # Start the telemetry receiver thread (updates system_status from Sensor node)
-    telemetry_thread = Thread(target=telemetry_listener, args=(web_app_ip, telemetry_listen_port))
+    telemetry_thread = Thread(target=telemetry_listener, args=(web_app_ip, TELEMETRY_PORT))
     telemetry_thread.daemon = True
     telemetry_thread.start()
 
