@@ -25,7 +25,6 @@ class PID:
         if controller_direction == 'REVERSE':
             self.Kp, self.Ki, self.Kd = -self.Kp, -self.Ki, -self.Kd
 
-
     # main function that handles all the PID math
     def compute(self, input_val):
         if not self.in_auto:
@@ -57,7 +56,7 @@ class PID:
 
         # If not enough time has passed, return last calculated output
         return self.output
-    
+
 
     # set PID gain constants
     def set_tuning(self, Kp, Ki, Kd):
@@ -107,7 +106,7 @@ class PID:
         self._last_input = 0.0
         self._ITerm = self.output
         min_out, max_out = self.output_limits
-        
+
         if (self._ITerm > max_out): self._ITerm = max_out
         elif(self._ITerm < min_out): self._ITerm = min_out
 
