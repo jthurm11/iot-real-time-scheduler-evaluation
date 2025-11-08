@@ -75,12 +75,12 @@ except ImportError:
         def __init__(self):
             self.time = time.time()
             self.distance = 20.0 # Start at setpoint
-            
+
         def get_distance_cm(self):
             # Simulate a slight, controlled oscillation around a default point (20cm)
             self.distance = 20.0 + 1.5 * math.sin(time.time() * 0.5) 
             return self.distance
-        
+
     sensor_mock = MockSensor()
     get_distance_cm = sensor_mock.get_distance_cm # Assign mock method to function name
 
@@ -90,32 +90,32 @@ except ImportError:
 def load_network_config():
     """Loads network parameters (IP/Port) from the network configuration file."""
     global FAN_IP, FAN_PORT, SAMPLE_TIME, MASTER_IP, MASTER_PORT
-    
+
     if not os.path.exists(NETWORK_CONFIG_FILE):
         logger.error(f"Network config file not found: {NETWORK_CONFIG_FILE}. Cannot run.")
         return False
-    
+
     try:
         with open(NETWORK_CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            
+
             # Fan command target
             FAN_IP = config.get("FAN_NODE_IP")
             FAN_PORT = config.get("FAN_COMMAND_PORT")
             
             # Telemetry target (Master Controller is assumed to listen on the Sensor Node's IP)
             MASTER_IP = config.get("SENSOR_NODE_IP") 
-            MASTER_PORT = config.get("STATUS_LISTEN_PORT", 5008)
-            
+            MASTER_PORT = config.get("TELEMETRY_PORT", 5006)
+
             # PID Sample Time from the config file
             SAMPLE_TIME = config.get("SAMPLE_TIME_S", 0.05) 
 
             if not FAN_IP or not FAN_PORT or not MASTER_IP or not MASTER_PORT:
                 logger.error("Network IP or Port configuration is incomplete.")
                 return False
-            
+
             return True
-            
+
     except Exception as e:
         logger.error(f"Failed to load network config: {e}")
         return False
@@ -144,7 +144,8 @@ def send_telemetry(current_height_cm, fan_duty, fan_rpm, congestion_status):
         
     telemetry_data = {
         "current_height": current_height_cm,
-        "fan_output": fan_duty, # Duty is 0-255
+        # FIX: Convert raw duty (0-255) to percentage (0-100)
+        "fan_output": fan_duty * (100.0 / 255.0), 
         "fan_rpm": fan_rpm,
         # Convert delay back to MS for the dashboard display
         "delay": congestion_status.get("delay_s", 0.0) * 1000.0, 
@@ -157,6 +158,7 @@ def send_telemetry(current_height_cm, fan_duty, fan_rpm, congestion_status):
         telemetry_sock.sendto(message, (MASTER_IP, MASTER_PORT))
     except Exception as e:
         # Suppress logging for frequent telemetry failures
+        logger.error(f"Failed to send telemetry data: {e}.")
         pass 
 
 
@@ -169,14 +171,15 @@ if not load_network_config():
 # 2. PID Setup
 SETPOINT = load_setpoint_config() # Initial load
 pid = PID(
-    Kp=180,
-    Ki=5,
-    Kd=3,
+    Kp=300,
+    Ki=0,
+    Kd=0.6,
     setpoint=SETPOINT,
     sample_time=SAMPLE_TIME, # Uses value from network_config.json (default 0.05)
-    output_limits=(0, 255), # RAW DUTY 0–255
-    controller_direction='REVERSE' 
+    output_limits=(0, 255),        # RAW DUTY 0–255 to fan
+    controller_direction='REVERSE' # ball-on-air needs REVERSE gain direction
 )
+
 # Ensure PID uses the loaded sample time for its calculations
 pid.set_sample_time(SAMPLE_TIME)
 
@@ -208,11 +211,10 @@ try:
         now_str = time.strftime('%H:%M:%S')
 
         if packet_sent:
-            command_str = str(duty).encode()
             try:
-                sock.sendto(command_str, (FAN_IP, FAN_PORT))
+                sock.sendto(str(duty).encode(), (FAN_IP, FAN_PORT))
                 # Update mock RPM (for display) based on current duty
-                mock_rpm = int(duty * (6000/255)) # Assuming max RPM is 6000 at 255 duty
+                mock_rpm = int(duty * (5000/255)) # Assuming max RPM is 5000 at 255 duty
                 logger.info(f"[{now_str}] H: {height:6.2f}cm | SP: {pid.setpoint:5.1f}cm | DUTY: {duty:3d} | DELAY: {congestion_status['delay_s']*1000.0:.1f}ms | SENT")
 
             except Exception as e:
