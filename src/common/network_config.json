@@ -1,0 +1,19 @@
+{
+"WEB_APP_IP": "0.0.0.0",
+"WEB_APP_PORT": 8000,
+
+"SENSOR_NODE_IP": "192.168.22.2",
+"FAN_NODE_IP": "192.168.22.1",
+
+"FAN_COMMAND_PORT": 5005,
+
+"SENSOR_DATA_LISTEN_PORT": 5006,
+"TELEMETRY_PORT": 5006,
+"FAN_DATA_LISTEN_PORT": 5007,
+
+"STATUS_LISTEN_PORT": 5008,
+
+"INTERFACE": "wlan0",
+"SAMPLE_TIME_S": 0.1,
+"DESCRIPTION": "Core network parameters for all nodes (Web App, Sensor, Fan) and control traffic."
+}
