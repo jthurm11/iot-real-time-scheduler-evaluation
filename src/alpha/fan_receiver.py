@@ -12,8 +12,8 @@ logging.basicConfig(level=logging.INFO, format='[Fan] %(levelname)s: %(message)s
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION PATHS ---
-CONFIG_DIR = "/opt/project/common/"
-NETWORK_CONFIG_FILE = os.path.join(CONFIG_DIR, "network_config.json")
+# The primary network config
+NETWORK_CONFIG_FILE = '/opt/project/common/network_config.json'
 
 # --- FAN HARDWARE CONFIGURATION ---
 PWM_PIN = 18            # blue wire from fan (PWM input)

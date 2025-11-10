@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # DUAL-MODE FAN CONTROLLER: Prioritizes CircuitPython (EMC2101) then falls back to SIMPLE_PWM mode.
 # Includes fan status reporting back to the Sensor Node (port 5007).
-
-import sys
 import time
 import socket
 import select
@@ -17,8 +15,8 @@ logging.basicConfig(level=logging.INFO, format='[Fan] %(levelname)s: %(message)s
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION PATHS ---
-CONFIG_DIR = "/opt/project/common/"
-NETWORK_CONFIG_FILE = os.path.join(CONFIG_DIR, "network_config.json")
+# The primary network config
+NETWORK_CONFIG_FILE = '/opt/project/common/network_config.json'
 
 # --- FAN HARDWARE CONFIGURATION ---
 PWM_PIN = 18            # blue wire from fan (PWM input)
@@ -46,7 +44,7 @@ BUFFER_SIZE = 1024
 
 # --- HARDWARE DETECTION & SETUP ---
 HARDWARE_MODE = None
-fan = None # Global variable for EMC2101 object (CircuitPython)
+fan = None # Global variable for the fan object
 
 # 1. Attempt CircuitPython (adafruit-emc2101) imports first
 try:
