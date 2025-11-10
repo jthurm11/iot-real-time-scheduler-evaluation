@@ -8,7 +8,7 @@ import json
 import sys
 import logging
 
-# Set up logging for better error visibility
+# --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='[Fan] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
