@@ -177,7 +177,7 @@ def rpm_sender_thread_func():
                     current_rpm = global_rpm
 
             # Send a simple JSON payload with the RPM value
-            payload = json.dumps({"rpm": current_rpm})
+            payload = json.dumps({"fan_rpm": current_rpm})
             telemetry_sock.sendto(payload.encode('utf-8'), (SENSOR_NODE_IP, FAN_DATA_LISTEN_PORT))
             logger.debug(f"RPM sent: {current_rpm}")
 

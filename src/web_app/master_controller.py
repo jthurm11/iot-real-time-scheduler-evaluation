@@ -297,7 +297,7 @@ def status_poller():
     # --- REAL DATA LOOP ---
     # Ensure the simulation mode above is commented out. 
     logger.info("Starting status poller thread...")
-    while not stop_event.is_set():
+    while True:
         # 1. Update from file
         load_experiment_status()
 
@@ -412,7 +412,8 @@ def fan_data_listener(listen_ip, listen_port):
                 system_status["last_update_fan"] = time.time() # Update timestamp
                 # Update only the fan-node reported fields
                 system_status["fan_rpm"] = data_dict.get("fan_rpm", system_status["fan_rpm"])
-                system_status["fan_output"] = data_dict.get("fan_output", system_status["fan_output"])
+                # Leave for reference. This should come from the sensor node now.
+                #system_status["fan_output"] = data_dict.get("fan_output", system_status["fan_output"])
                 
     except Exception as e:
         logger.error(f"Fan Data Listener failed: {e}")
@@ -495,7 +496,7 @@ def main():
     finally:
         stop_event.set()
         poller_thread.join()
-        telemetry_thread.join() # Ensure the telemetry thread is joined on exit
+        #telemetry_thread.join() # Ensure the telemetry thread is joined on exit
         logger.info("Sockets closed. Clean exit.")
 
 if __name__ == '__main__':
