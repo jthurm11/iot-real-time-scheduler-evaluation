@@ -5,7 +5,7 @@ import time
 import math
 import logging
 import socket
-from threading import Thread, Event
+import threading
 
 # Third-party libraries
 from flask import Flask, render_template, request, jsonify
@@ -24,7 +24,7 @@ EXPERIMENT_STATUS_FILE = '/tmp/current_experiment.txt'
 # --- NETWORK CONFIGURATION (Defaults) ---
 # We've migrated to common json configuration files that get loaded by load_network_config. 
 # These are all safe default values to use until load_network_config replaces them. 
-TELEMETRY_PORT = 5006 # This will be the SENSOR_DATA_LISTEN_PORT
+SENSOR_TELEMETRY_PORT = 5006 # This will be the SENSOR_DATA_LISTEN_PORT
 FAN_TELEMETRY_PORT = 5007 # This will be the FAN_DATA_LISTEN_PORT
 
 # Global status for experiment tracking
@@ -44,6 +44,9 @@ logging.getLogger('werkzeug').setLevel(logging.ERROR)
 # Use simple threading for SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+# --- THREAD CONTROL EVENT (Used by Poller and Listener) ---
+stop_event = threading.Event()
+
 # --- DATA STORES (Placeholder for real-time data) ---
 # Last known status of the system
 system_status = {
@@ -60,7 +63,7 @@ system_status = {
 }
 
 # Add a lock for thread-safe access to system_status
-status_lock = Thread.Lock() 
+status_lock = threading.Lock() 
 
 # --- CONFIGURATION & INIT ---
 
@@ -259,9 +262,6 @@ def handle_stop_experiment():
         emit('status_update', system_status) 
 
 
-# --- THREAD CONTROL EVENT (Used by Poller and Listener) ---
-stop_event = Event()
-
 def status_poller():
     """Continuously emits the current system status to all connected clients."""
     # Ensure the thread runs only when the server is active
@@ -310,15 +310,14 @@ def status_poller():
         
         time.sleep(1.0) # Update rate: 1 second
 
-poller_thread = Thread(target=status_poller)
-
 
 # --- TELEMETRY LISTENER THREADS ---
+""" Replaced by two dedicated listener threads below. Keeping this for reference. """
+"""
 def telemetry_listener(host, port):
-    """
-    UDP server to listen for real-time telemetry updates (height, fan output, RPM) 
-    from the Sensor/PID node. Updates the global system_status.
-    """
+    # UDP server to listen for real-time telemetry updates (height, fan output, RPM) 
+    # from the Sensor/PID node. Updates the global system_status.
+
     BUFFER_SIZE = 1024
     TIMEOUT = 0.5 # Wait time for new packets
 
@@ -371,7 +370,7 @@ def telemetry_listener(host, port):
     # 3. Clean up
     logger.info("Telemetry Listener thread stopping.")
     sock.close()
-
+"""
 
 def sensor_data_listener(listen_ip, listen_port):
     """Listens for continuous sensor data (height, setpoint, delay, loss) from the sensor node."""
@@ -459,8 +458,8 @@ def main():
 
 
     # Load the actual telemetry listener port from config
-    global TELEMETRY_PORT
-    TELEMETRY_PORT = config.get('SENSOR_DATA_LISTEN_PORT', 5006)
+    #global TELEMETRY_PORT
+    #TELEMETRY_PORT = config.get('SENSOR_DATA_LISTEN_PORT', 5006)
 
     # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
     logger.info("Configuration loaded:")
@@ -470,16 +469,17 @@ def main():
     logger.info(f"  Fan IP: {fan_ip}:{fan_port}")
 
     # Start the data poller thread (emits system_status to dashboard clients)
+    poller_thread = threading.Thread(target=status_poller)
     poller_thread.start()
-    
+
     # Start the telemetry receiver thread (updates system_status from Sensor node)
-    telemetry_thread = Thread(target=telemetry_listener, args=(web_app_ip, TELEMETRY_PORT))
-    telemetry_thread.daemon = True
-    telemetry_thread.start()
+    #telemetry_thread = threading.Thread(target=telemetry_listener, args=(web_app_ip, TELEMETRY_PORT))
+    #telemetry_thread.daemon = True
+    #telemetry_thread.start()
 
     # Start the new continuous telemetry listener threads
-    sensor_listener = Thread(target=sensor_data_listener, args=(web_app_listen_ip, sensor_telemetry_port), daemon=True)
-    fan_listener = Thread(target=fan_data_listener, args=(web_app_listen_ip, fan_telemetry_port), daemon=True)
+    sensor_listener = threading.Thread(target=sensor_data_listener, args=(web_app_listen_ip, sensor_telemetry_port), daemon=True)
+    fan_listener = threading.Thread(target=fan_data_listener, args=(web_app_listen_ip, fan_telemetry_port), daemon=True)
     sensor_listener.start()
     fan_listener.start()
 

@@ -3,10 +3,8 @@
 # Includes fan status reporting back to the Sensor Node (port 5007).
 import time
 import socket
-import select
 import threading
 import json
-import os
 import sys
 import logging
 
@@ -29,18 +27,14 @@ FAN_POLE_PAIRS = 2      # Typical for a 4-pole fan (2 pulses per revolution)
 # These are all safe default values to use until load_network_config replaces them. 
 FAN_COMMAND_IP = "0.0.0.0"
 FAN_COMMAND_PORT = 5005
-SENSOR_IP = "127.0.0.1" 
-FAN_DATA_PORT = 5007
+SENSOR_NODE_IP = "127.0.0.1" 
+FAN_DATA_LISTEN_PORT = 5007
 RPM_REPORT_INTERVAL = 0.5 # Send RPM data every half second
 
 # --- SHARED STATE & LOCKS ---
 global_rpm = 0
 rpm_lock = threading.Lock()
 stop_event = threading.Event()
-
-# --- UTILITY SETUP ---
-TIMEOUT = 0.01
-BUFFER_SIZE = 1024
 
 # --- HARDWARE DETECTION & SETUP ---
 HARDWARE_MODE = None
@@ -170,7 +164,7 @@ def rpm_sender_thread_func():
     """Periodically reads the global RPM value and sends it via UDP."""
     telemetry_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     #telemetry_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) # Not sure if needed, came from old script
-    logger.info(f"Sending RPM telemetry to {SENSOR_IP}:{FAN_DATA_PORT} every {RPM_REPORT_INTERVAL}s...")
+    logger.info(f"Sending RPM telemetry to {SENSOR_NODE_IP}:{FAN_DATA_LISTEN_PORT} every {RPM_REPORT_INTERVAL}s...")
 
     while not stop_event.is_set():
         try:
@@ -184,7 +178,7 @@ def rpm_sender_thread_func():
 
             # Send a simple JSON payload with the RPM value
             payload = json.dumps({"rpm": current_rpm})
-            telemetry_sock.sendto(payload.encode('utf-8'), (SENSOR_IP, FAN_DATA_PORT))
+            telemetry_sock.sendto(payload.encode('utf-8'), (SENSOR_NODE_IP, FAN_DATA_LISTEN_PORT))
             logger.debug(f"RPM sent: {current_rpm}")
 
             # Sleep for the report interval
@@ -200,14 +194,14 @@ def rpm_sender_thread_func():
 # --- MAIN EXECUTION ---
 def load_network_config():
     """Loads network settings from JSON config file."""
-    global FAN_COMMAND_PORT, SENSOR_IP, FAN_DATA_PORT
+    global FAN_COMMAND_PORT, SENSOR_NODE_IP, FAN_DATA_LISTEN_PORT
     try:
         with open(NETWORK_CONFIG_FILE, 'r') as f:
             config = json.load(f)
             # Use configuration values from network_config.json
             FAN_COMMAND_PORT = config.get("FAN_COMMAND_PORT", FAN_COMMAND_PORT)
-            SENSOR_IP = config.get("SENSOR_NODE_IP", SENSOR_IP)
-            FAN_DATA_PORT = config.get("FAN_DATA_LISTEN_PORT", FAN_DATA_PORT)
+            SENSOR_NODE_IP = config.get("SENSOR_NODE_IP", SENSOR_NODE_IP)
+            FAN_DATA_LISTEN_PORT = config.get("FAN_DATA_LISTEN_PORT", FAN_DATA_LISTEN_PORT)
         logger.info("Network configuration loaded.")
     except Exception as e:
         logger.warning(f"Could not load config file {NETWORK_CONFIG_FILE}. Using defaults. Error: {e}")
