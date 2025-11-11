@@ -1,7 +1,6 @@
 [Unit]
 Description=Sensor PID Controller Script
-After=multi-user.target pigpiod.service
-Requires=pigpiod.service
+After=multi-user.target
 
 # The placeholder names within '@' get replaced during 'setup_nodes.sh'.
 [Service]
@@ -10,7 +9,8 @@ WorkingDirectory=@@INSTALL_DIR@@/beta
 StandardOutput=journal
 StandardError=journal
 Restart=always
-User=@@SERVICE_USER@@
+# Need to execute as systemd default user on Ubuntu due to restricted access to /dev/mem
+#User=@@SERVICE_USER@@
 Environment="PYTHONPATH=@@INSTALL_DIR@@/common:$PYTHONPATH"
 
 [Install]
