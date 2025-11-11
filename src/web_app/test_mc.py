@@ -6,6 +6,7 @@ import math
 import logging
 import socket
 import threading
+import subprocess # New for running shell commands cleanly
 
 # Third-party libraries
 from flask import Flask, render_template, request, jsonify
@@ -27,7 +28,7 @@ EXPERIMENT_STATUS_FILE = '/tmp/current_experiment.txt'
 SENSOR_TELEMETRY_PORT = 5006 # This will be the SENSOR_DATA_LISTEN_PORT
 FAN_TELEMETRY_PORT = 5007 # This will be the FAN_DATA_LISTEN_PORT
 
-# Global status for experiment tracking
+# Global status for experiment tracking (now entirely controlled by this process)
 CURRENT_EXPERIMENT = "none" # Tracks current load type
 PID_STATUS = "STOPPED" # Tracks PID loop status (derived from experiment status)
 
@@ -58,8 +59,9 @@ system_status = {
     "fan_rpm": 0,
     "delay": 0.0,
     "loss_rate": 0.0,
-    "experiment_name": "N/A",  # Field for experiment name
-    "pid_running": False       # Field for explicit PID loop status
+    "load_magnitude": 0.0, # New: 0.0 to 100.0 (indicates load activity)
+    "experiment_name": "N/A", 
+    "pid_running": False
 }
 
 # Add a lock for thread-safe access to system_status
@@ -89,7 +91,8 @@ def load_initial_pid_status():
         if os.path.exists(SETPOINT_CONFIG_FILE):
             with open(SETPOINT_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
-                system_status['pid_setpoint'] = config.get("PID_SETPOINT", 20.0)
+                with status_lock:
+                    system_status['pid_setpoint'] = config.get("PID_SETPOINT", 20.0)
                 logger.info(f"Loaded initial PID Setpoint: {system_status['pid_setpoint']} cm")
     except Exception as e:
         logger.warning(f"Failed to load initial setpoint config: {e}")
@@ -99,40 +102,13 @@ def load_initial_pid_status():
         if os.path.exists(CONGESTION_CONFIG_FILE):
             with open(CONGESTION_CONFIG_FILE, 'r') as f:
                 config = json.load(f)
-                # The master controller now expects and stores delay in MS
-                system_status['delay'] = config.get("CONGESTION_DELAY", 0.0)
-                system_status['loss_rate'] = config.get("PACKET_LOSS_RATE", 0.0)
+                with status_lock:
+                    system_status['delay'] = config.get("CONGESTION_DELAY", 0.0)
+                    system_status['loss_rate'] = config.get("PACKET_LOSS_RATE", 0.0)
                 logger.info(f"Loaded initial Congestion: Delay={system_status['delay']}ms, Loss={system_status['loss_rate']}%")
     except Exception as e:
         logger.warning(f"Failed to load initial congestion config: {e}")
 
-
-def load_experiment_status():
-    """Reads the current experiment and PID status from a file written by the experiment_manager."""
-    global CURRENT_EXPERIMENT, PID_STATUS, system_status
-    try:
-        if os.path.exists(EXPERIMENT_STATUS_FILE):
-            with open(EXPERIMENT_STATUS_FILE, 'r') as f:
-                content = f.read().strip().split(',')
-                if len(content) == 2:
-                    CURRENT_EXPERIMENT = content[0]
-                    PID_STATUS = content[1] # 'RUNNING' or 'STOPPED'
-                    
-                    with status_lock:
-                         system_status["experiment_name"] = f"{CURRENT_EXPERIMENT} (PID {PID_STATUS})"
-                         system_status["pid_running"] = (PID_STATUS == "RUNNING")
-                    
-        else:
-            # File doesn't exist, assume stopped
-            CURRENT_EXPERIMENT = "none"
-            PID_STATUS = "STOPPED"
-            with status_lock:
-                 system_status["experiment_name"] = "N/A"
-                 system_status["pid_running"] = False
-            
-    except Exception as e:
-        logger.error(f"Error reading experiment status file: {e}")
-        
 
 # --- UTILITY FUNCTION FOR CONFIG WRITING ---
 def save_config(filepath, config_dict):
@@ -145,6 +121,32 @@ def save_config(filepath, config_dict):
     except Exception as e:
         logger.error(f"Failed to save config to {os.path.basename(filepath)}: {e}")
         return False
+
+def run_sudo_command(command, command_args=None):
+    """Safely runs a command prefixed with sudo using subprocess."""
+    full_command = ["sudo", command]
+    if command_args:
+        full_command.extend(command_args)
+    
+    logger.info(f"Executing: {' '.join(full_command)}")
+    try:
+        # Use subprocess.run for simple execution and wait
+        result = subprocess.run(full_command, capture_output=True, text=True, check=True)
+        # Check=True raises CalledProcessError for non-zero exit codes
+        logger.debug(f"Command output: {result.stdout.strip()}")
+        if result.stderr:
+             logger.warning(f"Command Stderr: {result.stderr.strip()}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed (Code {e.returncode}): {e.stderr.strip()}")
+        return False
+    except FileNotFoundError:
+        logger.error(f"Command not found: {command}")
+        return False
+    except Exception as e:
+        logger.error(f"Error running command: {e}")
+        return False
+
 
 # --- FLASK ROUTES ---
 @app.route('/')
@@ -194,6 +196,7 @@ def handle_setpoint_update(data):
         except ValueError:
             emit('command_ack', {'message': "Invalid setpoint value.", 'success': False})
 
+
 @socketio.on('set_congestion')
 def handle_congestion_update(data):
     """
@@ -221,45 +224,113 @@ def handle_congestion_update(data):
             }
             save_config(CONGESTION_CONFIG_FILE, config_dict)
             
-            logger.info(f"Congestion set: Delay={float_delay_ms:.0f}ms, Loss={float_loss_perc:.1f}%.")
+            logger.info(f"Congestion values saved: Delay={float_delay_ms:.0f}ms, Loss={float_loss_perc:.1f}%.")
 
-            # Send a confirmation/acknowledgment back to the client
-            emit('command_ack', {'message': f"Congestion set: Delay={float_delay_ms:.0f}ms, Loss={float_loss_perc:.1f}%.", 'success': True})
+            # Acknowledge the client that the config was saved, not necessarily applied
+            emit('command_ack', {'message': f"Congestion config saved. Click 'APPLY TC' to activate.", 'success': True})
         except ValueError:
             emit('command_ack', {'message': "Invalid delay/loss value.", 'success': False})
 
+
+@socketio.on('apply_tc')
+def handle_apply_tc():
+    """Applies the current congestion values using the traffic_manager.sh script."""
+    delay = system_status['delay']
+    loss = system_status['loss_rate']
+
+    logger.info(f"Applying TC rules: Delay={delay}ms, Loss={loss}%")
+    
+    # Executes: sudo /opt/project/beta/traffic_manager.sh apply <delay_ms> <loss_perc>
+    success = run_sudo_command(TC_SCRIPT, ["apply", str(delay), str(loss)])
+
+    if success:
+        message = f"TC Applied: Delay={delay:.0f}ms, Loss={loss:.1f}%."
+    else:
+        message = "Failed to APPLY Traffic Control rules."
+    
+    emit('command_ack', {'message': message, 'success': success})
+    
+@socketio.on('remove_tc')
+def handle_remove_tc():
+    """Removes all traffic control rules using the traffic_manager.sh script."""
+    logger.info("Removing all TC rules (Teardown).")
+    
+    # Executes: sudo /opt/project/beta/traffic_manager.sh teardown
+    success = run_sudo_command(TC_SCRIPT, ["teardown"])
+    
+    if success:
+        message = "Traffic Control rules REMOVED. Network is clean."
+    else:
+        message = "Failed to REMOVE Traffic Control rules."
+
+    # Optionally reset in-memory status, though the next congestion update will also do this
+    with status_lock:
+        system_status['delay'] = 0.0
+        system_status['loss_rate'] = 0.0
+    
+    emit('command_ack', {'message': message, 'success': success})
+
+
 @socketio.on('start_experiment')
 def handle_start_experiment(data):
-    """Handles request to start an experiment via experiment_manager.sh."""
+    """
+    Handles request to start an experiment/load.
+    The master controller will now directly manage the load via subprocess.
+    """
     load_type = data.get('load_type', 'none')
     if load_type not in ['iperf', 'stress', 'none']:
         load_type = 'none' 
+
+    if load_type == 'none':
+        # If 'none' is selected, simply push status update
+        logger.info("Experiment START requested with 'none' load.")
+    else:
+        logger.info(f"Attempting to START experiment load: {load_type}")
+        # Executes: sudo /opt/project/beta/load_manager.sh start <load_type>
+        success = run_sudo_command(LOAD_MANAGER_SCRIPT, ["start", load_type])
         
-    logger.info(f"Attempting to START experiment with load type: {load_type}")
-    
-    # Executes the shell script (which starts PID and load, and writes status file)
-    os.system(f"sudo /opt/project/beta/experiment_manager.sh run {load_type}")
-    
-    # Reload status after execution (it should be RUNNING now)
-    load_experiment_status() 
-    
+        if not success:
+            emit('command_ack', {'message': f"Failed to start load type: {load_type}", 'success': False})
+            load_type = 'none'
+
+    # Update in-memory status
     with status_lock:
-        emit('status_update', system_status.copy()) 
+        global CURRENT_EXPERIMENT
+        CURRENT_EXPERIMENT = load_type
+        # Assuming PID is always running when an experiment is running
+        system_status["experiment_name"] = f"{CURRENT_EXPERIMENT} (PID RUNNING)"
+        system_status["pid_running"] = True
+        system_status["load_magnitude"] = 100.0 if load_type != 'none' else 0.0
+        
+    emit('command_ack', {'message': f"Experiment load '{load_type}' started.", 'success': True})
+    with status_lock:
+        socketio.emit('status_update', system_status.copy()) 
 
 @socketio.on('stop_experiment')
 def handle_stop_experiment():
-    """Handles request to stop the current experiment and teardown network settings."""
+    """Handles request to stop the current experiment/load."""
     
-    logger.info("Attempting to STOP current experiment and TEARDOWN network.")
+    logger.info("Attempting to STOP current experiment load.")
     
-    # Executes the shell script (which stops PID and load, cleans tc, and writes status file)
-    os.system("sudo /opt/project/beta/experiment_manager.sh teardown")
+    # Executes: sudo /opt/project/beta/load_manager.sh stop
+    success = run_sudo_command(LOAD_MANAGER_SCRIPT, ["stop"])
     
-    # Reload status after execution (it should be STOPPED now)
-    load_experiment_status() 
-    
+    # Update in-memory status regardless of success
     with status_lock:
-        emit('status_update', system_status.copy()) 
+        global CURRENT_EXPERIMENT
+        CURRENT_EXPERIMENT = "none"
+        system_status["experiment_name"] = "N/A (PID STOPPED)"
+        system_status["pid_running"] = False
+        system_status["load_magnitude"] = 0.0
+        
+    if success:
+        message = "Experiment load stopped."
+    else:
+        message = "Attempted to stop load, but execution failed."
+    
+    emit('command_ack', {'message': message, 'success': success})
+    with status_lock:
+        socketio.emit('status_update', system_status.copy()) 
 
 
 def status_poller():
@@ -267,14 +338,10 @@ def status_poller():
     logger.info("Starting status poller thread...")
     while not stop_event.is_set():
         try:
-            # 1. Update from file
-            load_experiment_status()
-
             # Update timestamp for when this status was last collected/reported
-            system_status['last_update'] = time.strftime('%H:%M:%S')
-
-            # 2. Emit status
             with status_lock:
+                system_status['last_update'] = time.strftime('%H:%M:%S')
+                # 2. Emit status
                 socketio.emit('status_update', system_status.copy())
             
             time.sleep(1.0) # Update rate: 1 second
@@ -283,7 +350,7 @@ def status_poller():
             time.sleep(1)
 
 
-# --- TELEMETRY LISTENER THREADS ---
+# --- TELEMETRY LISTENER THREADS (No changes to the logic here) ---
 
 def sensor_data_listener(listen_ip, listen_port):
     """
@@ -301,9 +368,11 @@ def sensor_data_listener(listen_ip, listen_port):
             
             with status_lock:
                 system_status["last_update_sensor"] = time.time() # Update timestamp
+                # The commanded duty cycle calculated by the PID
+                system_status["fan_output"] = data_dict.get("fan_output_duty", system_status["fan_output"]) 
+                # Data from sensor node
                 system_status["current_height"] = data_dict.get("current_height", system_status["current_height"])
                 system_status["pid_setpoint"] = data_dict.get("pid_setpoint", system_status["pid_setpoint"])
-                system_status["fan_output"] = data_dict.get("fan_output_duty", system_status["fan_output"]) 
                 system_status["delay"] = data_dict.get("delay", system_status["delay"])
                 system_status["loss_rate"] = data_dict.get("loss_rate", system_status["loss_rate"])
                 
@@ -311,7 +380,8 @@ def sensor_data_listener(listen_ip, listen_port):
         if not stop_event.is_set():
             logger.error(f"Sensor Data Listener failed: {e}")
     finally:
-        sock.close()
+        if 'sock' in locals() and not stop_event.is_set(): # Only close if not in cleanup phase
+             sock.close()
 
 
 def fan_data_listener(listen_ip, listen_port):
@@ -329,13 +399,13 @@ def fan_data_listener(listen_ip, listen_port):
                 system_status["last_update_fan"] = time.time() # Update timestamp
                 # Update only the fan-node reported fields
                 system_status["fan_rpm"] = data_dict.get("fan_rpm", system_status["fan_rpm"])
-                # NOTE: fan_output (duty cycle) now comes from the sensor_data_listener
                 
     except Exception as e:
         if not stop_event.is_set():
             logger.error(f"Fan Data Listener failed: {e}")
     finally:
-        sock.close()
+        if 'sock' in locals() and not stop_event.is_set(): # Only close if not in cleanup phase
+             sock.close()
 
 
 # --- MAIN EXECUTION ---
@@ -346,13 +416,17 @@ def main():
     load_initial_pid_status() # Load saved values at startup
 
     # =========================================================================
-    # --- STARTUP RESET LOGIC (Ensures clean network state) ---
-    logger.info("Resetting network congestion and delay to zero (0ms, 0.0%) for startup.")
+    # --- STARTUP RESET LOGIC (Ensures clean network state and config file) ---
+    logger.info("Resetting network congestion config to zero (0ms, 0.0%) for startup.")
     
     # Update in-memory status
     with status_lock:
         system_status['delay'] = 0.0
         system_status['loss_rate'] = 0.0
+        system_status['load_magnitude'] = 0.0
+        system_status['experiment_name'] = "N/A (PID STOPPED)"
+        system_status['pid_running'] = False
+
 
     # Save the zero-values to the configuration file
     initial_congestion_config = {
@@ -361,14 +435,17 @@ def main():
     }
     save_config(CONGESTION_CONFIG_FILE, initial_congestion_config)
     
+    # Also ensure any external load is stopped and TC is removed on startup (via shell)
+    run_sudo_command(TC_SCRIPT, ["teardown"])
+    run_sudo_command(LOAD_MANAGER_SCRIPT, ["stop"])
+    
     # =========================================================================
 
     # Read network details from config
     web_app_ip = config.get('WEB_APP_IP', '0.0.0.0')
     web_app_port = config.get('WEB_APP_PORT', 8000)
-    fan_ip = config.get('FAN_NODE_IP', '192.168.22.1')
-    fan_port = config.get('FAN_COMMAND_PORT', 5005)
-    sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2')
+    # The IP used for dashboard display (e.g., the sensor IP)
+    sensor_ip = config.get('SENSOR_NODE_IP', '192.168.22.2') 
     
     # The IP on which the Web App is listening for telemetry
     web_app_listen_ip = config.get('WEB_APP_IP', '0.0.0.0') 
@@ -376,12 +453,11 @@ def main():
     fan_telemetry_port = config.get('FAN_DATA_LISTEN_PORT', 5007)
 
 
-    # --- LOGGING CONFIGURATION (Restored the requested detailed output) ---
+    # --- LOGGING CONFIGURATION ---
     logger.info("Configuration loaded:")
     logger.info(f"  Status Listener: {web_app_ip}:{web_app_port}") 
-    logger.info(f"  Telemetry Listener (Sensor): {web_app_ip}:{sensor_telemetry_port}")
-    logger.info(f"  Telemetry Listener (Fan): {web_app_ip}:{fan_telemetry_port}")
-    logger.info(f"  Fan IP: {fan_ip}:{fan_port}")
+    logger.info(f"  Telemetry Listener (Sensor): {web_app_listen_ip}:{sensor_telemetry_port}")
+    logger.info(f"  Telemetry Listener (Fan): {web_app_listen_ip}:{fan_telemetry_port}")
 
     # Start the data poller thread (emits system_status to dashboard clients)
     poller_thread = threading.Thread(target=status_poller)
@@ -404,7 +480,6 @@ def main():
         logger.error(f"Failed to start web server: {e}")
     finally:
         stop_event.set()
-        # Wait for poller to exit gracefully
         poller_thread.join()
         logger.info("Sockets closed. Clean exit.")
 
