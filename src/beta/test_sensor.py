@@ -58,7 +58,7 @@ fan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 # --- PID INSTANCE ---
 # Initialize with defaults; settings will be updated by config loader
 pid = PID(
-    Kp=300, Ki=0, Kd=0.6,
+    Kp=180, Ki=2.0, Kd=0.8,
     setpoint=current_state["pid_setpoint"],
     sample_time=current_state["sample_time"],
     output_limits=(0, 255),
