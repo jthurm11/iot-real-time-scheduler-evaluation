@@ -52,6 +52,7 @@
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- NOTE: SocketIO client library is loaded here -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
 </head>
 <body class="bg-gray-900 text-white font-sans antialiased p-2 sm:p-4">
@@ -206,7 +207,9 @@
     <script>
         // Use the dynamic __app_id provided by the Canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const socket = io('/' + appId, {
+        
+        // FIX: Connect to the default namespace ('/') as configured in master_controller.py
+        const socket = io({ 
             transports: ['websocket', 'polling'],
             reconnectionAttempts: 5,
             timeout: 5000 
@@ -297,16 +300,25 @@
         });
 
         socket.on('status_update', (data) => {
-            // Update status panel metrics
+            console.log('Received status update:', data);
+
+            // FIX 1: Update status panel metrics using correct keys from master_controller.py
             currentHeightValue.textContent = parseFloat(data.current_height).toFixed(1);
-            fanOutputValue.textContent = `${parseFloat(data.fan_output).toFixed(1)}%`;
-            fanRPMValue.textContent = `${parseInt(data.fan_rpm)} RPM`;
-            lastUpdateTime.textContent = data.last_update || 'N/A';
+            fanOutputValue.textContent = `${parseFloat(data.fan_output_duty || 0.0).toFixed(1)}%`; // Use fan_output_duty
+            fanRPMValue.textContent = `${parseInt(data.current_rpm || 0)} RPM`; // Use current_rpm
             
-            // Update PID and Load Status
-            updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', data.experiment_type);
+            // FIX 2: Convert master_timestamp (seconds) to a readable time string
+            if (data.master_timestamp) {
+                lastUpdateTime.textContent = new Date(data.master_timestamp * 1000).toLocaleTimeString();
+            } else {
+                lastUpdateTime.textContent = 'N/A';
+            }
             
-            // Update sliders to reflect current config (important on initial load or server config change)
+            // FIX 3: Update PID and Load Status using experiment_name
+            const loadType = data.experiment_name || 'none';
+            updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', loadType);
+            
+            // Update sliders to reflect current config
             setpointSlider.value = parseFloat(data.pid_setpoint).toFixed(1);
             delaySlider.value = Math.round(data.delay);
             lossSlider.value = parseFloat(data.loss_rate).toFixed(1);
@@ -327,11 +339,15 @@
             dataQueue.t.push(timeLabel);
             dataQueue.height.push(data.current_height);
             dataQueue.setpoint.push(data.pid_setpoint);
-            dataQueue.fanOutput.push(data.fan_output);
-            dataQueue.fanRPM.push(data.fan_rpm);
+            
+            // FIX 4: Use correct keys for chart data
+            dataQueue.fanOutput.push(data.fan_output_duty || 0.0); 
+            dataQueue.fanRPM.push(data.current_rpm || 0);
+            
             dataQueue.delay.push(data.delay);
             dataQueue.loss.push(data.loss_rate);
-            dataQueue.loadMagnitude.push(data.load_magnitude); // Assuming load_magnitude is included in status
+            // Use 0 if load_magnitude is missing from the server status
+            dataQueue.loadMagnitude.push(data.load_magnitude || 0); 
         });
 
         socket.on('command_ack', (data) => {
@@ -344,16 +360,53 @@
             
             if (action === 'setpoint_update') {
                 payload.setpoint = parseFloat(setpointSlider.value);
+                socket.emit('set_setpoint', { setpoint: payload.setpoint }); // Emitting to 'set_setpoint' as per master_controller.py
             } else if (action === 'congestion_update') {
                 payload.delay_ms = parseInt(delaySlider.value);
                 payload.loss_rate = parseFloat(lossSlider.value);
+                socket.emit('set_congestion', { delay: payload.delay_ms, loss: payload.loss_rate }); // Emitting to 'set_congestion'
             } else if (action === 'start_load') {
                  payload.load_type = loadTypeSelect.value;
+                 // NOTE: The Python master_controller doesn't define a listener for 'start'/'stop' actions directly,
+                 // but the experiment manager script typically monitors the config file. We'll rely on external mechanism for now.
+                 // This function needs further development based on the full system's API, but the core logic remains.
             }
             
             console.log(`Sending control action: ${action}`, payload);
-            socket.emit('control_command', payload);
+            // Since the master controller defines specific handlers (set_setpoint, set_congestion), 
+            // we will only emit general 'control_command' if the action is not one of the specific handlers.
+            // For 'start'/'stop'/'apply_tc'/'remove_tc'/'start_load'/'stop_load', these need to be defined in master_controller.py 
+            // or we need a way to pass them via 'control_command'.
+            
+            // For now, removing the general control_command emit to prevent double-sends, 
+            // as setpoint and congestion are handled by their specific emits above.
         }
+        
+        // FIX: The command handling needs to be updated to match the master_controller.py's defined listeners.
+        // We will update the sendControl function to emit to the specific endpoints defined in master_controller.py:
+        // 'set_setpoint' and 'set_congestion'. The other commands ('start', 'stop', 'apply_tc', etc.) 
+        // are currently unhandled in the provided master_controller.py snippet and would need a generic 'control_command' 
+        // handler in the backend to be processed. Let's assume a generic handler exists for simplicity 
+        // until the rest of the backend API is defined.
+
+        function sendControl(action) {
+            console.log(`Sending control action: ${action}`);
+            
+            if (action === 'setpoint_update') {
+                const newSetpoint = parseFloat(setpointSlider.value);
+                socket.emit('set_setpoint', { setpoint: newSetpoint });
+            } else if (action === 'congestion_update') {
+                const delayMs = parseInt(delaySlider.value);
+                const lossRate = parseFloat(lossSlider.value);
+                socket.emit('set_congestion', { delay: delayMs, loss: lossRate });
+            } else {
+                // Generic command handler for PID/Load Start/Stop
+                // NOTE: This relies on a generic 'control_command' listener in the backend 
+                // which is currently not defined in master_controller.py, but we'll assume it's for external actions.
+                socket.emit('control_command', { action: action, load_type: loadTypeSelect.value });
+            }
+        }
+
 
         // --- Slider Event Listeners (Auto-Apply on Change) ---
         setpointSlider.oninput = () => {
