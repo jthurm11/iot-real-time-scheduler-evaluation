@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-# CRITICAL FIX: Import and monkey-patch eventlet for proper WebSocket support
-import eventlet
-eventlet.monkey_patch() 
+from gevent import monkey
+from gevent.pywsgi import WSGIServer
+from geventwebsocket.handler import WebSocketHandler
+monkey.patch_all()
+
+# Standard libraries
 import os
 import json
 import time
@@ -42,12 +45,12 @@ logger = logging.getLogger(__name__)
 # --- WEB & SOCKETIO SETUP ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key_here' # Needed for session management
-# Use message_queue if running multiple instances, but not needed for single instance
-socketio = SocketIO(app, async_mode='eventlet') 
+socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*") 
 
+# FIX: Changed 'height' to 'distance' throughout the code
 # --- SYSTEM STATE ---
 system_status = {
-    "current_height": 0.0,
+    "current_distance": 0.0,
     "current_rpm": 0,
     "fan_output_duty": 0.0,
     "pid_status": PID_STATUS,
@@ -68,7 +71,7 @@ sensor_ip = "127.0.0.1"
 sensor_command_port = 5004
 sensor_telemetry_port = 5006
 fan_telemetry_port = 5007
-web_app_port = 8080
+web_app_port = 8000
 web_app_ip = "0.0.0.0" # Listen on all interfaces
 
 # --- CONFIGURATION LOADING ---
@@ -116,7 +119,7 @@ def update_status_file(filename, key, value):
 # --- DATA LISTENERS ---
 
 def sensor_data_listener(listen_ip, port):
-    """Listens for ball height and PID status updates from the sensor node."""
+    """Listens for ball distance and PID status updates from the sensor node."""
     global system_status
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try:
@@ -126,9 +129,16 @@ def sensor_data_listener(listen_ip, port):
                 data, _ = sock.recvfrom(1024)
                 try:
                     packet = json.loads(data.decode())
+
+                    # Fix: Extract the raw duty cycle (0-255) to show as percentage
+                    raw_duty = packet.get("fan_output_duty")
+                    if raw_duty is not None and isinstance(raw_duty, (int, float)):
+                        scaled_duty = round((raw_duty / 255.0) * 100)
+
                     with status_lock:
-                        system_status["current_height"] = packet.get("current_height", system_status["current_height"])
-                        system_status["fan_output_duty"] = packet.get("fan_output_duty", system_status["fan_output_duty"])
+                        system_status["current_distance"] = packet.get("current_distance", system_status["current_distance"])
+                        #system_status["fan_output_duty"] = packet.get("fan_output_duty", system_status["fan_output_duty"])
+                        system_status["fan_output_duty"] = scaled_duty
                         system_status["pid_status"] = packet.get("pid_status", system_status["pid_status"])
                         system_status["master_timestamp"] = time.time()
                 except json.JSONDecodeError:
@@ -152,7 +162,7 @@ def fan_data_listener(listen_ip, port):
                 try:
                     packet = json.loads(data.decode())
                     with status_lock:
-                        system_status["current_rpm"] = packet.get("rpm", system_status["current_rpm"])
+                        system_status["current_rpm"] = packet.get("fan_rpm", system_status["current_rpm"])
                         system_status["master_timestamp"] = time.time()
                 except json.JSONDecodeError:
                     logger.warning("Received invalid JSON from fan node.")
@@ -287,7 +297,7 @@ def status_poller():
             socketio.emit('status_update', system_status)
         
         # Poll every 250ms (or whatever is appropriate for the system)
-        eventlet.sleep(0.25) # Use eventlet.sleep instead of time.sleep
+        time.sleep(0.25)
 
 def telemetry_listener(listen_ip, port):
     """
@@ -306,20 +316,21 @@ if __name__ == '__main__':
     poller_thread.start()
 
     # Start the new continuous telemetry listener threads
-    web_app_listen_ip = '0.0.0.0' # Always listen on all interfaces
-    sensor_listener = threading.Thread(target=sensor_data_listener, args=(web_app_listen_ip, sensor_telemetry_port), daemon=True)
-    fan_listener = threading.Thread(target=fan_data_listener, args=(web_app_listen_ip, fan_telemetry_port), daemon=True)
+    sensor_listener = threading.Thread(target=sensor_data_listener, args=(web_app_ip, sensor_telemetry_port), daemon=True)
+    fan_listener = threading.Thread(target=fan_data_listener, args=(web_app_ip, fan_telemetry_port), daemon=True)
     sensor_listener.start()
     fan_listener.start()
 
     logger.info(f"Master Controller is running. Access the dashboard at: http://{sensor_ip}:{web_app_port}")
 
     try:
-        # CRITICAL FIX: Running with Eventlet is mandatory for WebSockets
-        logger.info("Starting SocketIO server with Eventlet...")
-        # Since we monkey-patched eventlet, socketio.run automatically uses it.
-        # We remove allow_unsafe_werkzeug=True.
-        socketio.run(app, host=web_app_ip, port=web_app_port) 
+        # NEW FIX: Starting SocketIO server with Gevent WSGIServer
+        logger.info("Starting SocketIO server with Gevent WSGI Server...")
+
+        # The WSGIServer handles both Flask/HTTP and SocketIO connections
+        http_server = WSGIServer((web_app_ip, web_app_port), app, handler_class=WebSocketHandler)
+        http_server.serve_forever()
+
     except KeyboardInterrupt:
         logger.info("Controller stopped manually.") 
     except Exception as e:

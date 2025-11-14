@@ -71,10 +71,11 @@
                 <p id="pid-status-text" class="text-lg font-bold text-red-500 mt-1">STOPPED</p>
             </div>
             <!-- Current Height (Color changed to sky-400 to match chart line) -->
+             <!-- FIX: Changed from height to distance from sensor -->
             <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
-                <p class="text-sm font-medium text-gray-400">Height (cm)</p>
+                <p class="text-sm font-medium text-gray-400">Distance from Sensor (cm)</p>
                 <div class="digital-display text-xl text-sky-400 mt-1">
-                    <span id="current-height-value">0.0</span>
+                    <span id="current-distance-value">0.0</span>
                 </div>
             </div>
             <!-- Fan Output (Color changed to amber-400 to match chart line) -->
@@ -172,15 +173,15 @@
         <!-- 3. Charts Grid (First two are equal width, third is full width) -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             
-            <!-- Height & Setpoint Chart (Equal width with Fan Chart) -->
-            <div id="height-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700">
-                <h2 class="text-lg font-bold mb-3 text-indigo-400">Ball Height vs. Setpoint (cm)</h2>
+            <!-- Distance & Setpoint Chart (Equal width with Fan Chart) -->
+            <div id="distance-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700">
+                <h2 class="text-lg font-bold mb-3 text-indigo-400">Ball Distance from Sensor vs. Setpoint (cm)</h2>
                 <div class="chart-container">
-                    <canvas id="heightChart"></canvas>
+                    <canvas id="distanceChart"></canvas>
                 </div>
             </div>
 
-            <!-- Fan Chart (Equal width with Height Chart) -->
+            <!-- Fan Chart (Equal width with Distance Chart) -->
             <div id="fan-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700">
                 <h2 class="text-lg font-bold mb-3 text-indigo-400">Fan Output and RPM</h2>
                 <div class="chart-container">
@@ -210,14 +211,14 @@
         
         // FIX: Connect to the default namespace ('/') as configured in master_controller.py
         const socket = io({ 
-            transports: ['websocket', 'polling'],
+            transports: ['websocket'], // Force WebSocket only for real-time
             reconnectionAttempts: 5,
             timeout: 5000 
         });
 
         // --- DOM Elements ---
         const pidStatusText = document.getElementById('pid-status-text');
-        const currentHeightValue = document.getElementById('current-height-value');
+        const currentDistanceValue = document.getElementById('current-distance-value');
         const fanOutputValue = document.getElementById('fan-output-value');
         const fanRPMValue = document.getElementById('fan-rpm-value');
         const lastUpdateTime = document.getElementById('last-update-time');
@@ -240,12 +241,14 @@
         const messageBox = document.getElementById('message-box');
 
         // --- Chart Configuration & Data Queue ---
-        const CHART_HISTORY_SIZE = 150; // Points
-        const UPDATE_INTERVAL_MS = 250; // Update charts every 250ms
+        // Chart history is calculated by (Time Desired) / (Update Interval)
+        // To acheive 3 minutes of history: 180 seconds / 0.25 seconds = 720 points
+        const CHART_HISTORY_SIZE = 1200; // Points
+        const UPDATE_INTERVAL_MS = 250; // Update charts every 250ms (0.25s)
 
         let dataQueue = {
             t: [], // Time labels
-            height: [],
+            distance: [],
             setpoint: [],
             fanOutput: [],
             fanRPM: [],
@@ -254,7 +257,7 @@
             loadMagnitude: [] // For Congestion Chart
         };
         
-        let heightChart, fanChart, congestionChart;
+        let distanceChart, fanChart, congestionChart;
 
         // --- Utility Functions ---
 
@@ -303,7 +306,7 @@
             console.log('Received status update:', data);
 
             // FIX 1: Update status panel metrics using correct keys from master_controller.py
-            currentHeightValue.textContent = parseFloat(data.current_height).toFixed(1);
+            currentDistanceValue.textContent = parseFloat(data.current_distance).toFixed(1);
             fanOutputValue.textContent = `${parseFloat(data.fan_output_duty || 0.0).toFixed(1)}%`; // Use fan_output_duty
             fanRPMValue.textContent = `${parseInt(data.current_rpm || 0)} RPM`; // Use current_rpm
             
@@ -337,7 +340,7 @@
 
             // Add new data point to the queue
             dataQueue.t.push(timeLabel);
-            dataQueue.height.push(data.current_height);
+            dataQueue.distance.push(data.current_distance);
             dataQueue.setpoint.push(data.pid_setpoint);
             
             // FIX 4: Use correct keys for chart data
@@ -451,14 +454,14 @@
                 }
             };
 
-            // 1. Height Chart
-            const heightCtx = document.getElementById('heightChart').getContext('2d');
-            heightChart = new Chart(heightCtx, {
+            // 1. Distance Chart
+            const distanceCtx = document.getElementById('distanceChart').getContext('2d');
+            distanceChart = new Chart(distanceCtx, {
                 type: 'line',
                 data: {
                     labels: dataQueue.t,
                     datasets: [
-                        { label: 'Height (cm)', data: dataQueue.height, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                        { label: 'Distance (cm)', data: dataQueue.distance, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.1 },
                         { label: 'Setpoint (cm)', data: dataQueue.setpoint, borderColor: '#10b981', borderWidth: 2, pointRadius: 0, borderDash: [5, 5], tension: 0.1 }
                     ]
                 },
@@ -468,8 +471,9 @@
                         ...chartOptions.scales,
                         y: { 
                             ...chartOptions.scales.y, 
-                            title: { display: true, text: 'Height (cm)', color: '#ccc' }, 
-                            min: 0, max: 55, // Adjusted max based on new slider range
+                            reverse: true, // Invert Y-axis
+                            title: { display: true, text: 'Distance (cm)', color: '#ccc' }, 
+                            min: 0, // Removed max to allow auto-scaling
                             grid: { color: 'rgba(255, 255, 255, 0.4)' } 
                         }
                     }
@@ -552,9 +556,9 @@
             }
 
             // Update all chart data
-            heightChart.data.labels = dataQueue.t;
-            heightChart.data.datasets[0].data = dataQueue.height;
-            heightChart.data.datasets[1].data = dataQueue.setpoint;
+            distanceChart.data.labels = dataQueue.t;
+            distanceChart.data.datasets[0].data = dataQueue.distance;
+            distanceChart.data.datasets[1].data = dataQueue.setpoint;
 
             fanChart.data.labels = dataQueue.t;
             fanChart.data.datasets[0].data = dataQueue.fanOutput;
@@ -566,7 +570,7 @@
             congestionChart.data.datasets[2].data = dataQueue.loadMagnitude;
 
             // Redraw
-            heightChart.update('none'); 
+            distanceChart.update('none'); 
             fanChart.update('none');
             congestionChart.update('none');
         }

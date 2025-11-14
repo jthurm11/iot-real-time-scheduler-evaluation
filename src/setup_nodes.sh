@@ -1,28 +1,11 @@
 #!/bin/bash
-# This script configures the hostname, sets a static IP (192.168.1.x),
-# establishes the Wi-Fi connection, and verifies network connectivity using nmcli
-# for consistent deployment in a Debian Bookworm environment.
+# This script configures the node hostname, sets a static IP (if NetworkManager is present),
+# generates SSH keys, and installs node-specific project dependencies.
 #
 # --- USAGE ---
 # USAGE (Run all tasks): ./setup_nodes.sh
 # USAGE (Run single task): ./setup_nodes.sh -f [function_name]
-
-# --- ANSI Color Codes (Initial Definitions) ---
-# These are defined here to ensure colors are available from the very start.
-# Commenting out for now to avoid overhead, and defining needed colors exclusively within log_message ${func}().
-# export RED='\033[0;31m'
-# export GREEN='\033[0;32m'
-# export YELLOW='\033[0;33m'
-# export BLUE='\033[0;34m'
-# export MAGENTA='\033[0;35m'
-# export CYAN='\033[0;36m'
-# export NC='\033[0m' # No Color
-
-# --- Aliases for Color Reference (Initial Definitions) ---
-# export INFO_COLOR="${GREEN}"
-# export WARNING_COLOR="${YELLOW}"
-# export ERROR_COLOR="${RED}"
-# export DEBUG_COLOR="${MAGENTA}"
+# USAGE (Quiet output): ./setup_nodes.sh -l ERROR
 
 # --- GLOBAL CONFIGURATION ---
 WIFI_IF="wlan0"
@@ -37,44 +20,91 @@ GIT_DIR="${HOME}/Public"
 GIT_ROOT="${GIT_DIR}/iot-real-time-scheduler-evaluation"
 SCRIPT_DIR="${GIT_ROOT}/src"
 
+# Default logging level (Can be set via -l flag: DEBUG, INFO, WARNING, ERROR)
+DEFAULT_LOG_LEVEL="INFO"
+LOG_LEVEL="" # Placeholder for the active level
+
+# --- PACKAGE DEPENDENCIES (Node Specific) ---
+# Define packages needed for Alpha (Fan Controller)
+ALPHA_PACKAGES=(
+    #"python3-matplotlib"
+    "pigpiod"
+    #"i2c-tools"
+)
+# Define packages needed for Beta (Sensor Manager)
+BETA_PACKAGES=(
+    "python3-flask"
+    "python3-flask-socketio"
+    "python3-gevent"
+    "python3-gevent-websocket"
+)
+
+# --- SYSTEMD SERVICES ---
+ALPHA_SERVICES=(
+    "pigpiod"
+    "fan_controller"
+)
+BETA_SERVICES=(
+    "sensor_controller"
+    "web_app"
+)
+
 # --- Utility Functions ---
 
-# Function log_message ${func}()
-# Usage: log_message ${func} <reporting function> "<message>" LEVEL
-#   - LEVEL := { INFO | WARNING | ERROR | DEBUG }
+# Function to convert log level string to a number (higher = more severe)
+get_log_level_numeric() {
+    local level_str="$1"
+    case "$level_str" in
+        "ERROR")   echo 3 ;;
+        "WARNING") echo 2 ;;
+        "INFO")    echo 1 ;;
+        "DEBUG")   echo 0 ;;
+        *)         echo 1 ;; # Default to INFO if invalid
+    esac
+}
+
+
+# Function log_message()
+# Usage: log_message <reporting function> "<message>" [LEVEL]
 log_message() {
     local reporter="$1" message="$2"
-    local level="${3:-INFO}" # Default to INFO if not provided
-    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-    local NC='\033[0m'   # No color
+    local level="${3:-INFO}" # Default level for the message
+    
+    # Get numeric values for comparison
+    local script_level_num=$(get_log_level_numeric "$LOG_LEVEL")
+    local message_level_num=$(get_log_level_numeric "$level")
 
-    case "${level}" in
-        "INFO")    color='\033[0;36m';;  # Cyan
-        "WARNING") color='\033[0;33m';;  # Yellow
-        "ERROR")   color='\033[0;31m';;  # Red
-        "DEBUG")   color='\033[0;35m';;  # Magenta
-        *)         color="${NC}" ;; # Default to no color for unknown levels
-    esac
+    # Only print if message severity is >= script's configured severity
+    if [ "$message_level_num" -ge "$script_level_num" ]; then
+        
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+        local NC='\033[0m'   # No color
 
-    echo -e "${color}${timestamp} ${reporter} [${level}]${NC} ${message}"
+        case "${level}" in
+            "INFO")    color='\033[0;36m';;  # Cyan
+            "WARNING") color='\033[0;33m';;  # Yellow
+            "ERROR")   color='\033[0;31m';;  # Red
+            "DEBUG")   color='\033[0;35m';;  # Magenta
+            *)         color="${NC}" ;;
+        esac
+
+        echo -e "${color}${timestamp} ${reporter} [${level}]${NC} ${message}"
+    fi
 }
 
 # Function to define key variables and assign hostname if needed
 who_am_i() {
-    local func="who_am_i" # Define who I am for logger function
-
-    # Disabling output for a quiet function
-    #log_message ${func} "--- SET SIGNAL IP ---"
-
-    # Check and set hostname if expected does not match received.
-    # This ensures host variables are set if running a subsequent function
-    local curr_name=$(nmcli general hostname)
+    local func="who_am_i"
+    
+    # Use hostnamectl to get the current static/transient hostname
+    local curr_name=$(hostnamectl hostname)
+    
+    # Check if hostname is already set to a known node
     if [[ "${NODES[@]}" =~ "${curr_name}" ]]; then
         TARGET_NODE="${curr_name}"
+        log_message ${func} "Hostname detected as ${TARGET_NODE}." INFO
     else
-        log_message ${func} "--- SETUP HOSTNAME ---" INFO
-        log_message ${func} "host _alpha_ = Fan Controller" INFO
-        log_message ${func} "host _beta_  = Sensor Manager" INFO
+        log_message ${func} "Hostname not set. Prompting for node selection..." INFO
         PS3='Select the hostname for this node: '
 
         select hostname_choice in "${NODES[@]}"; do
@@ -86,18 +116,17 @@ who_am_i() {
             fi
         done
 
-        # Apply hostname using nmcli (PERSISTENT WRITE)
-        #log_message ${func} "Applying hostname to $TARGET_NODE..." INFO
-        sudo nmcli general hostname "$TARGET_NODE" >/dev/null
+        # Apply hostname using hostnamectl (PERSISTENT WRITE)
+        sudo hostnamectl set-hostname "$TARGET_NODE" >/dev/null
         if [ $? -ne 0 ]; then
-            log_message ${func} "Error setting hostname with nmcli." ERROR
+            log_message ${func} "Error setting hostname with hostnamectl. Check if the utility is available." ERROR
             return 1
         else
-            log_message ${func} "Hostname set successfully. (Requires reboot to finalize.)" INFO
+            log_message ${func} "Hostname set to $TARGET_NODE. (Requires reboot to finalize.)" WARNING
         fi
     fi
 
-    # Ensure peer variables are defined
+    # Set peer variables based on TARGET_NODE
     case "$TARGET_NODE" in
         "alpha")
             TARGET_IP="${ALPHA_IP}"
@@ -110,39 +139,10 @@ who_am_i() {
             NEIGHBOR_IP="${ALPHA_IP}"
             ;;
     esac
-    TARGET_NET_MASK="${TARGET_IP}/24"
+    # Note: Using /28 mask here as it only needs 16 addresses, which is safer
+    TARGET_NET_MASK="${TARGET_IP}/28" 
 
     export TARGET_NODE TARGET_IP NEIGHBOR_NODE NEIGHBOR_IP TARGET_NET_MASK
-}
-
-# Function to display usage instructions
-# NOTE: This function should be updated if changes/additions are made. 
-show_usage() {
-    local func="show_usage"
-    log_message ${func} "--- SCRIPT USAGE ---" INFO
-    echo "Usage: $0 -f [function_name]"
-    echo
-    echo "Available core functions:"
-    printf "  %-25s %s\n" "install_project" "Installs services, copies scripts, and sets permissions."
-    printf "  %-25s %s\n" "configure_signal_ip" "Connects to Wi-Fi and sets the static IP address."
-    printf "  %-25s %s\n" "check_neighbor" "Pings the other node for network verification."
-    printf "  %-25s %s\n" "generate_ssh_key" "Generates a key and attempts to copy it to the neighbor."
-    #printf "  %-25s %s\n" "final_summary" "Prints the final node configuration."
-    echo
-    exit 1
-}
-
-# Function to ping the other node (for verification)
-check_neighbor() {
-    local func="check_neighbor"
-
-    ping -c 2 "$NEIGHBOR_IP" >/dev/null
-
-    if [ $? -eq 0 ]; then
-        return 0
-    else
-        return 1
-    fi
 }
 
 # --- Core Setup Functions ---
@@ -152,124 +152,110 @@ configure_signal_ip() {
     local func="configure_signal_ip"
     log_message ${func} "--- STATIC SIGNAL IP CONFIGURATION ---" INFO
 
-    # Check for existing active Wi-Fi connection
-    # Default fields for this command are DEVICE,TYPE,STATE,CONNECTION. 
-    # These can be changed/ordered with the global '--fields' option. 
-    # For now, assume CONNECTION is the 4th column. 
+    # Simple check to see if the IP is already assigned
+    if ip addr show "$WIFI_IF" | grep -q "$TARGET_IP"; then
+        log_message ${func} "Static IP ${TARGET_IP} already assigned to ${WIFI_IF}. Skipping configuration." WARNING
+        return 0
+    fi 
+
+    # Check for NetworkManager utility, as the rest of this function relies on nmcli
+    if ! command -v nmcli &> /dev/null; then
+        log_message ${func} "nmcli (NetworkManager) is required for this step but not found. Skipping IP configuration." ERROR
+        log_message ${func} "You must manually configure the static IP ${TARGET_IP}/28 for the Wi-Fi connection." WARNING
+        return 1
+    fi
+
+    # Find the active Wi-Fi connection name
     CONN_NAME=$(nmcli dev | grep "^${WIFI_IF}.* connected " | awk '{print $4}')
 
     if [ -n "$CONN_NAME" ]; then
         export CONN_NAME
 
-        # There doesn't appear to be any negative effects to re-adding the IP address if
-        # the connection profile already has it registered. So, could remove most of
-        # this logic to make things more efficient.
-        nmcli -g ip4.address connection show "$CONN_NAME" | grep "$TARGET_IP" >/dev/null
+        # Modify the connection profile to add the static IP.
+        log_message ${func} "Modifying connection '${CONN_NAME}' to use static IP ${TARGET_NET_MASK}..." DEBUG
+        sudo nmcli connection modify "$CONN_NAME" +ipv4.addresses "$TARGET_IP/28"
+
+        if [ $? -ne 0 ]; then
+            log_message ${func} "Failed to modify connection profile." ERROR
+            return 1
+        fi
+
+        # Re-activate the connection to apply changes immediately.
+        sudo nmcli connection up "$CONN_NAME" >/dev/null
         if [ $? -eq 0 ]; then
-            log_message ${func} "Signal IP already assigned." INFO
+                log_message ${func} "Static IP configured via nmcli and connection re-activated." WARNING
+            return 0
         else
-            # /28 = .1 - .14
-            sudo nmcli connection modify "$CONN_NAME" +ipv4.addresses "$TARGET_IP/28"
-            if [ $? -ne 0 ]; then
-                log_message ${func} "Failed to add signal IP ${TARGET_IP}. Check 'sudo nmcli connection show $CONN_NAME'." ERROR
-                return 1
-            else
-                # Activate the connection
-                sudo nmcli connection up "$CONN_NAME"
-                log_message ${func} "Signal IP added and activated." INFO
-                return 0
-            fi
+                log_message ${func} "Failed to activate connection via nmcli." ERROR
+            return 1
         fi
     else
-        log_message ${func} "Could not determine Wi-Fi connection." ERROR
+        log_message ${func} "Could not find an active Wi-Fi connection on ${WIFI_IF}." WARNING
         return 1
     fi
-
-    # Shouldn't get here
-    return
 }
 
-# Function to print final configuration summary
-final_summary() {
-    local func="final_summary" # Define who I am for logger function
-    echo "======================================================="
-    log_message ${func} "SETUP COMPLETE: $TARGET_NODE" INFO
-    echo "======================================================="
-
-    # Check current Wi-Fi SSID
-    ACTIVE_SSID=$(nmcli -t -f active,ssid dev wifi list | grep yes | head -n 1 | cut -d: -f2)
-    #ACTIVE_SSID=$(nmcli -g 802-11-wireless.ssid c show $CONN_NAME)
-
-    # Get the static signal IP (matches SIGNAL_NET_PREFIX)
-    #STATIC_IP_CLEAN=$(ip a show dev "$WIFI_IF" | grep 'inet ' | grep "$SIGNAL_NET_PREFIX" | awk '{print $2}' | cut -d/ -f1)
-
-    # Get the DHCP assigned IP (does NOT match SIGNAL_NET_PREFIX)
-    #DHCP_IP=$(ip a show dev "$WIFI_IF" | grep 'inet ' | grep -v "$SIGNAL_NET_PREFIX" | awk '{print $2}' | cut -d/ -f1)
-
-    # Get all assigned IP4 addresses
-    IP_ADDRS=$(nmcli -g ip4.address connection show $CONN_NAME)
-
-    printf "%-25s %s\n" "Hostname:" "$TARGET_NODE"
-    printf "%s\n" "-------------------------------------------------------"
-    #printf "%-25s %s\n" "DHCP Assigned IP (Primary):" "$DHCP_IP"
-    #printf "%-25s %s\n" "Static Control IP (Signal):" "$STATIC_IP_CLEAN"
-    printf "%-25s %s\n" "Assigned IPs:" "$IP_ADDRS"
-    printf "%-25s %s\n" "Connected Wi-Fi SSID:" "$ACTIVE_SSID"
-
-    echo "======================================================="
-    log_message ${func} "If hostname was changed, please reboot the system now" INFO
-}
-
-# Function to generate SSH keys for GitHub access.
+# Function to generate SSH keys
 generate_ssh_key() {
-    local func="generate_ssh_key" # Define who I am for logger function
-    log_message ${func} "--- GENERATING SSH KEY ---" INFO
+    local func="generate_ssh_key"
     local ssh_file="$HOME/.ssh/id_ed25519"
 
-    if ! [ -f "${ssh_file}" ]; then
+    log_message ${func} "--- CHECKING/GENERATING SSH KEY ---" INFO
+    
+    # Check for existing key and skip if found
+    if [ -f "${ssh_file}" ]; then
+        log_message ${func} "SSH key already exists at ${ssh_file}. Skipping generation." WARNING
+    else
         # Ensure the .ssh directory exists
         mkdir -p ~/.ssh
 
         # Quietly generate SSH key with no passphrase for automation.
         ssh-keygen -q -t ed25519 -f "$ssh_file" -C "$TARGET_NODE" -N ""
-    fi
-    pub_key=$(cat "${ssh_file}.pub")
+        if [ $? -eq 0 ]; then
+            log_message ${func} "SSH key generated successfully." WARNING
+        else
+            log_message ${func} "Error generating SSH key." ERROR
+            return 1
+        fi
 
-    log_message ${func} "Action Required" DEBUG
-    log_message ${func} "Add the following public key as a 'Deploy Key' to the GitHub repository:"
-    echo
-    echo "$pub_key"
-    echo
-
-    # Attempt to copy the public key to our neighbor. BatchMode won't prompt for a password.
-    #ssh -o BatchMode=yes -o ConnectTimeout=5 $SERVICE_USER@"$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
-    ssh -o ConnectTimeout=5 "$NEIGHBOR_IP" "mkdir -p ~/.ssh && \
-        echo \"$pub_key\" >> ~/.ssh/authorized_keys && \
-        chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys" 2>/dev/null
-
-    if [ $? -ne 0 ]; then
-        log_message ${func} "Error installing SSH keys to neighbor" WARNING
+        # Print manual copy instructions for the user
+        log_message ${func} "ACTION REQUIRED: Copy public key to neighbor (${NEIGHBOR_NODE})" WARNING
+        log_message ${func} "Run the following command MANUALLY on this machine to enable passwordless SSH:"
+        echo -e "    ssh-copy-id ${SERVICE_USER}@${NEIGHBOR_IP}\n"
     fi
     return 0
 }
 
-# --- Service Deployment Functions ---
-
 # Function to copy files and set permissions
 install_project() {
-    local func="install_project" # Define who I am for logger function
-    log_message ${func} "--- INSTALLING PROJECT FILES ---" INFO
+    local func="install_project"
+    log_message ${func} "--- INSTALLING PROJECT FILES & DEPENDENCIES ---" INFO
 
-    # Check that node-specific directory exists, because if not, 
-    # either we're in the wrong place or the repo isn't installed.
-    if ! [ -d $TARGET_NODE ]; then
+    # Determine which package set to use
+    local PACKAGES_TO_INSTALL
+    if [ "$TARGET_NODE" == "alpha" ]; then
+        PACKAGES_TO_INSTALL=("${ALPHA_PACKAGES[@]}")
+        SERVICES_TO_ENABLE=("${ALPHA_SERVICES[@]}")
+    elif [ "$TARGET_NODE" == "beta" ]; then
+        PACKAGES_TO_INSTALL=("${BETA_PACKAGES[@]}")
+        SERVICES_TO_ENABLE=("${BETA_SERVICES[@]}")
+    else
+        log_message ${func} "Unknown target node '$TARGET_NODE'. Cannot install node-specific packages." ERROR
+        return 1
+    fi
+
+    # Check for node-specific project directory
+    if ! [ -d $SCRIPT_DIR/$TARGET_NODE ]; then
         log_message ${func} "Cannot find project files. Ensure repo is installed." ERROR
         return 1
     fi
 
-    # Create target directory and copy all files. 
-    # Note that we only want common and node-specific scripts copied, 
-    # so that incorrect services are not enabled in the next step.
+    # Install Dependencies using the node-specific array
+    log_message ${func} "Installing required system packages for ${TARGET_NODE}: ${PACKAGES_TO_INSTALL[*]}..." DEBUG
+    sudo apt update >/dev/null 2>&1
+    sudo apt install -y "${PACKAGES_TO_INSTALL[@]}"
+
+    # Create target directory and copy all files
     sudo mkdir -p "$INSTALL_DIR"
     sudo cp -r "$SCRIPT_DIR"/{common,$TARGET_NODE} "$INSTALL_DIR"/
 
@@ -281,113 +267,108 @@ install_project() {
     sudo chown -R $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR"
     sudo find "$INSTALL_DIR" -type f -name "*.py" -exec chmod +x {} \;
 
-    log_message ${func} "Project files installed successfully to $INSTALL_DIR." INFO
+    log_message ${func} "Project files copied and ownership set to $INSTALL_DIR." WARNING
 
     # Install and enable services
-    declare -a installed_services
     for service_file in $(find "$INSTALL_DIR" -type f -name "*.service"); do
         local SERVICE_NAME="$(basename ${service_file})"
         local SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
-        local SCRIPT_PATH="$INSTALL_DIR/$SERVICE_NAME"
 
-        # Expression #1 uses '#' delimiters due to file path expansion. 
+        # Replace placeholders in service file: INSTALL_DIR and SERVICE_USER
         sudo sed -e "s#@@INSTALL_DIR@@#$INSTALL_DIR#g" \
             -e "s/@@SERVICE_USER@@/$SERVICE_USER/g" \
             ${service_file} | sudo tee $SERVICE_PATH >/dev/null
-
-        # Add name of service to array, to enable in next step.
-        installed_services+=("$SERVICE_NAME")
     done
 
-    # Change placeholder pingserver to neighbor node
+    # Change placeholder pingserver to neighbor node in connection status script
+    # This ensures the indicator light monitors the neighbor
     sed -i "s/google.com/$NEIGHBOR_IP/g" $INSTALL_DIR/common/connection_status_led.py
+    log_message ${func} "Updated connection status script to ping ${NEIGHBOR_IP}." DEBUG
 
+    # Enable and start services
     sudo systemctl daemon-reload
-    for service in ${installed_services[@]}; do
+    for service in ${SERVICES_TO_ENABLE[@]}; do
         sudo systemctl enable --quiet --now "$service"
         if [ $? -ne 0 ]; then
-            log_message ${func} "Error enabling service "$service"". ERROR
+            log_message ${func} "Error enabling service "$service"." ERROR
         else
-            log_message ${func} "Service "$service" enabled succesfully." INFO
+            log_message ${func} "Service "$service" enabled successfully." INFO
         fi
     done
-    unset installed_services
+    
+    # Enable I2C bus for Fan Controller (i2c-10 on CM4)
+    ### NOTE: Keeping for reference, but disabling for now.
+    # log_message ${func} "Checking I2C bus configuration..." INFO
+    # if ! grep -q 'dtparam=i2c_vc=on' /boot/firmware/config.txt; then
+    #     # Add the line if it's missing 
+    #     sudo sed -i '$a\dtparam=i2c_vc=on' /boot/firmware/config.txt
+    #     log_message ${func} "I2C setting added to config.txt. Requires reboot." WARNING
+    # else
+    #     log_message ${func} "I2C setting already configured." INFO
+    # fi
 
-    # Handle python additives/dependencies
-    sudo apt install python3-matplotlib pigpiod
-    sudo systemctl enable --now pigpiod
-
-    # Needed so that $SCRIPT_DIR/{alpha,beta}/<scripts.py> can import common modules.
-    export PYTHONPATH="${SCRIPT_DIR}/common:$PYTHONPATH"
-
-    # Install dependencies and enable the I2C bus for the fan controller (i2c-10 on CM4)
-    sudo apt install i2c-tools
-    if [[ $(grep -i "i2c_vc" /boot/firmware/config.txt) ]]; then
-        # Try to uncomment whatever is defined
-        sudo sed -i '/i2c_vc/s/^#//' /boot/firmware/config.txt
-    else
-        # Add the line
-        sudo sed -i '$a\dtparam=i2c_vc=on' /boot/firmware/config.txt
-    fi
-
-    log_message ${func} "Project services installed and creation attempted." 
+    log_message ${func} "Project installation complete." WARNING
     return 0
 }
 
+
 # --- MAIN EXECUTION LOGIC ---
 FUNC_TO_RUN=""
+LOG_LEVEL="$DEFAULT_LOG_LEVEL" # Initialize LOG_LEVEL with default
+func="MAIN"
 
-while getopts "f:h" opt; do
+while getopts "f:l:h" opt; do
     case ${opt} in
         f)
             FUNC_TO_RUN="$OPTARG"
             ;;
+        l)
+            # Normalize and set the log level
+            LOG_LEVEL=$(echo "$OPTARG" | tr '[:lower:]' '[:upper:]')
+            ;;
         h)
-            # Help was asked for
-            show_usage
+            log_message ${func} "Usage: $0 [-f function_name] [-l LOG_LEVEL]. Available functions: install_project, configure_signal_ip, generate_ssh_key" INFO
+            log_message ${func} "LOG_LEVEL can be DEBUG, INFO (default), WARNING, or ERROR." INFO
+            exit 0
             ;;
         \?)
-            # Invalid option provided
-            show_usage
+            log_message ${func} "Invalid option provided." WARNING
+            exit 1
             ;;
         :)
-            # Option requires an argument
-            echo "Error: Option -${OPTARG} requires an argument." >&2
-            show_usage
+            log_message ${func} "Error: Option -${OPTARG} requires an argument." ERROR
+            exit 1
             ;;
     esac
 done
 
-# --- EXECUTION ---
 # Ensure host & peer variables are defined
 who_am_i
-func="MAIN"
 
 # Process the defined function.
 if [ -n "$FUNC_TO_RUN" ]; then
-    # Option -f provided: Execute the specified function using a case statement.
-    log_message ${func} "Executing requested function: $FUNC_TO_RUN"
-
+    # Execute single requested function
     case "$FUNC_TO_RUN" in
-        who_am_i|log_message|show_usage)
-            log_message ${func} "Utility function '$FUNC_TO_RUN' cannot be run directly." WARNING
-            show_usage
-            ;;
-        install_project|configure_signal_ip|check_neighbor|generate_ssh_key)
-            # Core functions are run here.
+        install_project|configure_signal_ip|generate_ssh_key)
             "$FUNC_TO_RUN" || { log_message ${func} "Function failed: $FUNC_TO_RUN" ERROR; exit 1; }
             ;;
         *)
-            log_message ${func} "Function '$FUNC_TO_RUN' not found or is not a core function." WARNING
-            show_usage
+            log_message ${func} "Function '$FUNC_TO_RUN' not recognized or cannot be run directly. Exiting." WARNING
+            exit 1
             ;;
     esac
 else
-    # No argument provided. Running full setup sequence.
-    # The full sequence is now explicitly defined here:
-    configure_signal_ip || { log_message ${func} "Setup aborted due to function failure: configure_signal_ip" WARNING; exit 1; }
-    check_neighbor || { log_message ${func} "Neighbor could not be reached: check_neighbor" WARNING; }
-    generate_ssh_key || { log_message ${func} "Setup aborted due to function failure: generate_ssh_key" WARNING; exit 1; }
-    install_project #|| { log_message ${func} "Setup aborted due to function failure: install_project" WARNING; exit 1; }
-    final_summary
+    # Full Run: Execute the entire setup sequence
+    log_message ${func} "Running full setup sequence for $TARGET_NODE." INFO
+    
+    # 1. Static IP Configuration (only if NetworkManager is present)
+    configure_signal_ip || { log_message ${func} "Setup aborted: configure_signal_ip failed." ERROR; exit 1; }
+    
+    # 2. SSH Key Generation
+    generate_ssh_key || { log_message ${func} "Setup aborted: generate_ssh_key failed." ERROR; exit 1; }
+    
+    # 3. Project Installation
+    install_project || { log_message ${func} "Setup aborted: install_project failed." ERROR; exit 1; }
+    
+    log_message ${func} "Full setup sequence finished." INFO
 fi
