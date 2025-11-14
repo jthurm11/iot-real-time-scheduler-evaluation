@@ -38,8 +38,9 @@ except Exception as e:
 # Protect access to these with a lock
 state_lock = threading.Lock() 
 
+# FIX: Changed 'height' to 'distance' throughout the code
 current_state = {
-    "current_height": 0.0,
+    "current_distance": 0.0,
     "current_duty": 0,
     "pid_setpoint": 20.0,
     "delay": 0.0,         # MS
@@ -178,10 +179,10 @@ def pid_control_thread_func(pid_controller):
         update_runtime_configs(pid_controller)
 
         # 2. Sensor Read
-        height = get_distance_cm()
+        distance = get_distance_cm()
         
         # 3. PID Compute
-        output = pid_controller.compute(height)
+        output = pid_controller.compute(distance)
 
         # 4. Command Preparation and Send
         duty = int(max(0, min(255, output)))
@@ -201,14 +202,14 @@ def pid_control_thread_func(pid_controller):
         
         # 5. Update Shared State
         with state_lock:
-            current_state["current_height"] = height
+            current_state["current_distance"] = distance
             current_state["current_duty"] = duty
             
         # 6. Send Command
         if packet_sent:
             try:
                 fan_sock.sendto(str(duty).encode('utf-8'), (current_state["fan_ip"], current_state["fan_port"]))
-                logger.debug(f"FAN duty SENT: {duty:3d} | H: {height:6.2f}cm")
+                logger.debug(f"FAN duty SENT: {duty:3d} | H: {distance:6.2f}cm")
             except Exception as e:
                 logger.error(f"Failed to send fan command: {e}")
         else:
@@ -236,17 +237,17 @@ def telemetry_sender_thread_func():
             with state_lock:
                 # Prepare the payload Master Controller's sensor listener expects
                 payload_data = {
-                    "current_height": current_state["current_height"],
+                    "current_distance": current_state["current_distance"],
                     "pid_setpoint": current_state["pid_setpoint"],
                     "delay": current_state["delay"],             # MS
                     "loss_rate": current_state["loss_rate"],     # %
                     "fan_output_duty": current_state["current_duty"]
                 }
             
-            # The key for height must match what master_controller.py expects: current_height
+            # The key for distance must match what master_controller.py expects: current_distance
             payload = json.dumps(payload_data).encode('utf-8')
             telemetry_sock.sendto(payload, (current_state["master_ip"], current_state["master_telemetry_port"]))
-            logger.info(f"Telemetry sent: H={current_state['current_height']:.2f}")
+            logger.info(f"Telemetry sent: H={current_state['current_distance']:.2f}")
 
         except Exception as e:
             logger.error(f"Error in telemetry sender: {e}")
