@@ -247,7 +247,7 @@ def telemetry_sender_thread_func():
             # The key for distance must match what master_controller.py expects: current_distance
             payload = json.dumps(payload_data).encode('utf-8')
             telemetry_sock.sendto(payload, (current_state["master_ip"], current_state["master_telemetry_port"]))
-            logger.info(f"Telemetry sent: H={current_state['current_distance']:.2f}")
+            logger.debug(f"Telemetry sent: H={current_state['current_distance']:.2f}")
 
         except Exception as e:
             logger.error(f"Error in telemetry sender: {e}")
