@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Project Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for better look */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        /* Chart specific height - keeping it compact */
+        .chart-container { height: 300px; } 
+        
+        /* Digital-style font for metrics */
+        .digital-display {
+            font-family: 'Inter', monospace;
+            background-color: #0c1a32;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.5rem;
+            display: inline-block;
+            box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+            font-weight: 700;
+        }
+
+        /* Custom track styles for sliders */
+        input[type=range]::-webkit-slider-runnable-track {
+            background: #4b5563; 
+            border-radius: 0.5rem;
+            height: 0.5rem;
+        }
+        input[type=range]::-moz-range-track {
+            background: #4b5563; 
+            border-radius: 0.5rem;
+            height: 0.5rem;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            margin-top: -6px; 
+            height: 1.5rem;
+            width: 1.5rem;
+            border-radius: 50%;
+            background: #6366f1; /* Indigo 500 */
+            cursor: pointer;
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.5);
+            transition: background 0.15s ease-in-out;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            background: #8183f8; /* Lighter Indigo */
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- NOTE: SocketIO client library is loaded here -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans antialiased p-2 sm:p-4">
+    
+    <div class="max-w-7xl mx-auto space-y-4">
+        <header class="text-center p-2">
+            <h1 class="text-3xl font-extrabold text-indigo-400 mb-1">IoT Traffic Scheduler Dashboard</h1>
+            <p class="text-md text-gray-400">Control & Network Congestion Analysis</p>
+        </header>
+
+        <!-- 1. Current Status Metrics (Fixed order, always at top) -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <!-- PID Status -->
+            <div id="status-card" class="bg-gray-800 p-3 rounded-lg shadow-xl text-center flex flex-col justify-center">
+                <p class="text-sm font-medium text-gray-400">PID Loop Status</p>
+                <p id="pid-status-text" class="text-lg font-bold text-red-500 mt-1">STOPPED</p>
+            </div>
+            <!-- Current Height (Color changed to sky-400 to match chart line) -->
+             <!-- FIX: Changed from height to distance from sensor -->
+            <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
+                <p class="text-sm font-medium text-gray-400">Distance from Sensor (cm)</p>
+                <div class="digital-display text-xl text-sky-400 mt-1">
+                    <span id="current-distance-value">0.0</span>
+                </div>
+            </div>
+            <!-- Fan Output (Color changed to amber-400 to match chart line) -->
+            <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
+                <p class="text-sm font-medium text-gray-400">Fan Output (%) / RPM</p>
+                <div class="digital-display text-md text-amber-400 mt-1">
+                    <span id="fan-output-value">0.0%</span> / <span id="fan-rpm-value">0 RPM</span>
+                </div>
+            </div>
+            <!-- Last Update -->
+            <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
+                <p class="text-sm font-medium text-gray-400">Last Update</p>
+                <p id="last-update-time" class="text-lg font-bold text-gray-200 mt-1">N/A</p>
+            </div>
+        </div>
+        
+        <!-- 2. Control Panels (2 columns on wide screen, vertical stacking on narrow) -->
+        <!-- Order is now: System Controls (L/Top) then Experiment Actions (R/Bottom) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+             <!-- 2a. System Controls (PID Start/Stop & All Sliders) - LEFT/TOP -->
+            <div id="system-controls-card" class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700 h-full flex flex-col space-y-4">
+                <h3 class="text-xl font-bold text-teal-400 border-b border-teal-700 pb-2">PID & Congestion Controls</h3>
+
+                <!-- PID Start/Stop -->
+                <div class="flex flex-wrap gap-2">
+                    <button id="start-btn" class="flex-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold transition duration-150 text-sm" onclick="sendControl('start')">Start PID</button>
+                    <button id="stop-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('stop')" disabled>Stop PID</button>
+                </div>
+                
+                <!-- Setpoint Slider -->
+                <div class="border-t border-gray-700 pt-3">
+                    <div class="flex justify-between items-center mb-2">
+                        <label for="setpoint-slider" class="text-md font-semibold text-teal-300">Setpoint (cm)</label>
+                        <span id="setpoint-value" class="text-lg font-bold text-teal-300">20.0 cm</span>
+                    </div>
+                    <!-- Range updated to 5.0 - 50.0 -->
+                    <input type="range" id="setpoint-slider" min="5.0" max="50.0" step="0.5" value="20.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                </div>
+
+                <!-- Delay Slider -->
+                <div class="border-t border-gray-700 pt-3">
+                    <div class="flex justify-between items-center mb-2">
+                        <label for="delay-slider" class="text-md font-semibold text-yellow-300">Delay (ms)</label>
+                        <span id="delay-value" class="text-lg font-bold text-yellow-300">0 ms</span>
+                    </div>
+                    <input type="range" id="delay-slider" min="0" max="500" step="10" value="0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                </div>
+
+                <!-- Latency Slider (formerly Loss Rate) -->
+                <div class="border-t border-gray-700 pt-3">
+                    <div class="flex justify-between items-center mb-2">
+                        <label for="loss-slider" class="text-md font-semibold text-red-300">Latency (%)</label>
+                        <span id="loss-value" class="text-lg font-bold text-red-300">0.0 %</span>
+                    </div>
+                    <!-- Range updated to 0.0 - 50.0 -->
+                    <input type="range" id="loss-slider" min="0.0" max="50.0" step="0.5" value="0.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                </div>
+
+            </div>
+            
+            <!-- 2b. Experiment Actions (Load & TC) - RIGHT/BOTTOM -->
+            <div id="experiment-manager-card" class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700 h-full flex flex-col space-y-4">
+                <h3 class="text-xl font-bold text-pink-400 border-b border-pink-700 pb-2">Experiment Actions</h3>
+                
+                <!-- Load Control (Renamed) -->
+                <div class="space-y-2">
+                    <p class="text-sm text-gray-400">Background Load Type: <span id="current-load-type" class="font-semibold text-white">None</span></p>
+                    <select id="load-type-select" class="w-full p-1 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-green-500 focus:border-green-500">
+                        <option value="none" selected>none (No Load)</option>
+                        <option value="iperf">iperf (Network)</option>
+                        <option value="stress">stress (CPU)</option>
+                    </select>
+                    <div class="flex flex-wrap gap-2">
+                        <button id="start-load-btn" class="flex-1 px-3 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('start_load')">Start Load</button>
+                        <button id="stop-load-btn" class="flex-1 px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('stop_load')" disabled>Stop Load</button>
+                    </div>
+                </div>
+
+                <!-- TC Actions (Renamed & Colors Flipped) -->
+                <div class="border-t border-gray-700 pt-3 space-y-2">
+                    <p class="text-md font-semibold text-red-300">Traffic Control Rules</p>
+                    <div class="flex flex-wrap gap-2">
+                        <!-- Apply (Good) is green -->
+                        <button id="apply-tc-btn" class="flex-1 px-3 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('apply_tc')" disabled>Apply TC</button>
+                        <!-- Remove (Bad) is red -->
+                        <button id="remove-tc-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('remove_tc')" disabled>Remove TC</button>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- 3. Charts Grid (First two are equal width, third is full width) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            
+            <!-- Distance & Setpoint Chart (Equal width with Fan Chart) -->
+            <div id="distance-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700">
+                <h2 class="text-lg font-bold mb-3 text-indigo-400">Ball Distance from Sensor vs. Setpoint (cm)</h2>
+                <div class="chart-container">
+                    <canvas id="distanceChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Fan Chart (Equal width with Distance Chart) -->
+            <div id="fan-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700">
+                <h2 class="text-lg font-bold mb-3 text-indigo-400">Fan Output and RPM</h2>
+                <div class="chart-container">
+                    <canvas id="fanChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Congestion & Load Chart (Full Width) -->
+            <div id="congestion-chart-card" class="bg-gray-800 p-3 rounded-xl shadow-2xl border border-gray-700 lg:col-span-2">
+                <h2 class="text-lg font-bold mb-3 text-orange-400">Congestion and Background Load Effect</h2>
+                <div class="chart-container">
+                    <canvas id="congestionChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Message Box -->
+        <div id="message-box" class="fixed bottom-4 right-4 bg-gray-800 text-white p-3 rounded-lg shadow-2xl transition duration-500 opacity-0 z-50 min-w-[200px] text-sm">
+            <!-- Messages appear here -->
+        </div>
+
+    </div>
+
+    <script>
+        // Use the dynamic __app_id provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        
+        // FIX: Connect to the default namespace ('/') as configured in master_controller.py
+        const socket = io({ 
+            transports: ['websocket'], // Force WebSocket only for real-time
+            reconnectionAttempts: 5,
+            timeout: 5000 
+        });
+
+        // --- DOM Elements ---
+        const pidStatusText = document.getElementById('pid-status-text');
+        const currentDistanceValue = document.getElementById('current-distance-value');
+        const fanOutputValue = document.getElementById('fan-output-value');
+        const fanRPMValue = document.getElementById('fan-rpm-value');
+        const lastUpdateTime = document.getElementById('last-update-time');
+        const currentLoadType = document.getElementById('current-load-type');
+
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const applyTcBtn = document.getElementById('apply-tc-btn');
+        const removeTcBtn = document.getElementById('remove-tc-btn');
+        const startLoadBtn = document.getElementById('start-load-btn');
+        const stopLoadBtn = document.getElementById('stop-load-btn');
+        const loadTypeSelect = document.getElementById('load-type-select');
+
+        const setpointSlider = document.getElementById('setpoint-slider');
+        const setpointValueSpan = document.getElementById('setpoint-value');
+        const delaySlider = document.getElementById('delay-slider');
+        const delayValueSpan = document.getElementById('delay-value');
+        const lossSlider = document.getElementById('loss-slider');
+        const lossValueSpan = document.getElementById('loss-value');
+        const messageBox = document.getElementById('message-box');
+
+        // --- Chart Configuration & Data Queue ---
+        // Chart history is calculated by (Time Desired) / (Update Interval)
+        // To acheive 3 minutes of history: 180 seconds / 0.25 seconds = 720 points
+        const CHART_HISTORY_SIZE = 1200; // Points
+        const UPDATE_INTERVAL_MS = 250; // Update charts every 250ms (0.25s)
+
+        let dataQueue = {
+            t: [], // Time labels
+            distance: [],
+            setpoint: [],
+            fanOutput: [],
+            fanRPM: [],
+            delay: [], // For Congestion Chart (Latency MS)
+            loss: [],  // For Congestion Chart (Latency %)
+            loadMagnitude: [] // For Congestion Chart
+        };
+        
+        let distanceChart, fanChart, congestionChart;
+
+        // --- Utility Functions ---
+
+        function updateStatusDisplay(status, running, loadType) {
+            const isRunning = running === true;
+            pidStatusText.textContent = isRunning ? 'RUNNING' : 'STOPPED';
+            pidStatusText.classList.remove('text-red-500', 'text-green-500');
+            pidStatusText.classList.add(isRunning ? 'text-green-500' : 'text-red-500');
+            
+            // Update button states
+            startBtn.disabled = isRunning;
+            stopBtn.disabled = !isRunning;
+            applyTcBtn.disabled = !isRunning;
+            removeTcBtn.disabled = !isRunning;
+            
+            // Load buttons state
+            startLoadBtn.disabled = loadType !== 'none' || !isRunning;
+            stopLoadBtn.disabled = loadType === 'none' || !isRunning;
+
+            currentLoadType.textContent = loadType.toUpperCase();
+            loadTypeSelect.value = loadType;
+        }
+
+        function showMessage(message, success) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('opacity-0', 'bg-green-700', 'bg-red-700');
+            messageBox.classList.add('opacity-100', success ? 'bg-green-700' : 'bg-red-700');
+            setTimeout(() => {
+                messageBox.classList.remove('opacity-100');
+                messageBox.classList.add('opacity-0');
+            }, 3000);
+        }
+
+        // --- SocketIO Handlers ---
+        socket.on('connect', () => {
+            console.log('Connected to Master Controller via SocketIO.');
+            showMessage('Connected to Master Controller.', true);
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from Master Controller.');
+            showMessage('Disconnected from Master Controller.', false);
+        });
+
+        socket.on('status_update', (data) => {
+            console.log('Received status update:', data);
+
+            // FIX 1: Update status panel metrics using correct keys from master_controller.py
+            currentDistanceValue.textContent = parseFloat(data.current_distance).toFixed(1);
+            fanOutputValue.textContent = `${parseFloat(data.fan_output_duty || 0.0).toFixed(1)}%`; // Use fan_output_duty
+            fanRPMValue.textContent = `${parseInt(data.current_rpm || 0)} RPM`; // Use current_rpm
+            
+            // FIX 2: Convert master_timestamp (seconds) to a readable time string
+            if (data.master_timestamp) {
+                lastUpdateTime.textContent = new Date(data.master_timestamp * 1000).toLocaleTimeString();
+            } else {
+                lastUpdateTime.textContent = 'N/A';
+            }
+            
+            // FIX 3: Update PID and Load Status using experiment_name
+            const loadType = data.experiment_name || 'none';
+            updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', loadType);
+            
+            // Update sliders to reflect current config
+            setpointSlider.value = parseFloat(data.pid_setpoint).toFixed(1);
+            delaySlider.value = Math.round(data.delay);
+            lossSlider.value = parseFloat(data.loss_rate).toFixed(1);
+            
+            // Update slider displays immediately
+            setpointValueSpan.textContent = `${parseFloat(data.pid_setpoint).toFixed(1)} cm`;
+            delayValueSpan.textContent = `${Math.round(data.delay)} ms`;
+            lossValueSpan.textContent = `${parseFloat(data.loss_rate).toFixed(1)} %`;
+
+
+            // --- Real-time Data Queue Update ---
+            const now = new Date();
+            const timeLabel = now.getHours().toString().padStart(2, '0') + ':' + 
+                              now.getMinutes().toString().padStart(2, '0') + ':' + 
+                              now.getSeconds().toString().padStart(2, '0');
+
+            // Add new data point to the queue
+            dataQueue.t.push(timeLabel);
+            dataQueue.distance.push(data.current_distance);
+            dataQueue.setpoint.push(data.pid_setpoint);
+            
+            // FIX 4: Use correct keys for chart data
+            dataQueue.fanOutput.push(data.fan_output_duty || 0.0); 
+            dataQueue.fanRPM.push(data.current_rpm || 0);
+            
+            dataQueue.delay.push(data.delay);
+            dataQueue.loss.push(data.loss_rate);
+            // Use 0 if load_magnitude is missing from the server status
+            dataQueue.loadMagnitude.push(data.load_magnitude || 0); 
+        });
+
+        socket.on('command_ack', (data) => {
+            showMessage(data.message, data.success);
+        });
+        
+        // --- Control Functions ---
+        function sendControl(action) {
+            let payload = { action: action };
+            
+            if (action === 'setpoint_update') {
+                payload.setpoint = parseFloat(setpointSlider.value);
+                socket.emit('set_setpoint', { setpoint: payload.setpoint }); // Emitting to 'set_setpoint' as per master_controller.py
+            } else if (action === 'congestion_update') {
+                payload.delay_ms = parseInt(delaySlider.value);
+                payload.loss_rate = parseFloat(lossSlider.value);
+                socket.emit('set_congestion', { delay: payload.delay_ms, loss: payload.loss_rate }); // Emitting to 'set_congestion'
+            } else if (action === 'start_load') {
+                 payload.load_type = loadTypeSelect.value;
+                 // NOTE: The Python master_controller doesn't define a listener for 'start'/'stop' actions directly,
+                 // but the experiment manager script typically monitors the config file. We'll rely on external mechanism for now.
+                 // This function needs further development based on the full system's API, but the core logic remains.
+            }
+            
+            console.log(`Sending control action: ${action}`, payload);
+            // Since the master controller defines specific handlers (set_setpoint, set_congestion), 
+            // we will only emit general 'control_command' if the action is not one of the specific handlers.
+            // For 'start'/'stop'/'apply_tc'/'remove_tc'/'start_load'/'stop_load', these need to be defined in master_controller.py 
+            // or we need a way to pass them via 'control_command'.
+            
+            // For now, removing the general control_command emit to prevent double-sends, 
+            // as setpoint and congestion are handled by their specific emits above.
+        }
+        
+        // FIX: The command handling needs to be updated to match the master_controller.py's defined listeners.
+        // We will update the sendControl function to emit to the specific endpoints defined in master_controller.py:
+        // 'set_setpoint' and 'set_congestion'. The other commands ('start', 'stop', 'apply_tc', etc.) 
+        // are currently unhandled in the provided master_controller.py snippet and would need a generic 'control_command' 
+        // handler in the backend to be processed. Let's assume a generic handler exists for simplicity 
+        // until the rest of the backend API is defined.
+
+        function sendControl(action) {
+            console.log(`Sending control action: ${action}`);
+            
+            if (action === 'setpoint_update') {
+                const newSetpoint = parseFloat(setpointSlider.value);
+                socket.emit('set_setpoint', { setpoint: newSetpoint });
+            } else if (action === 'congestion_update') {
+                const delayMs = parseInt(delaySlider.value);
+                const lossRate = parseFloat(lossSlider.value);
+                socket.emit('set_congestion', { delay: delayMs, loss: lossRate });
+            } else {
+                // Generic command handler for PID/Load Start/Stop
+                // NOTE: This relies on a generic 'control_command' listener in the backend 
+                // which is currently not defined in master_controller.py, but we'll assume it's for external actions.
+                socket.emit('control_command', { action: action, load_type: loadTypeSelect.value });
+            }
+        }
+
+
+        // --- Slider Event Listeners (Auto-Apply on Change) ---
+        setpointSlider.oninput = () => {
+            setpointValueSpan.textContent = `${parseFloat(setpointSlider.value).toFixed(1)} cm`;
+        };
+        setpointSlider.onchange = () => {
+            sendControl('setpoint_update');
+        };
+
+        const handleCongestionChange = () => {
+            delayValueSpan.textContent = `${delaySlider.value} ms`;
+            // Note: UI says Latency (%), data is still loss_rate
+            lossValueSpan.textContent = `${parseFloat(lossSlider.value).toFixed(1)} %`; 
+            // Send update automatically when slider is released
+            sendControl('congestion_update');
+        };
+
+        delaySlider.onchange = handleCongestionChange;
+        lossSlider.onchange = handleCongestionChange;
+        
+        delaySlider.oninput = () => { delayValueSpan.textContent = `${delaySlider.value} ms`; };
+        lossSlider.oninput = () => { lossValueSpan.textContent = `${parseFloat(lossSlider.value).toFixed(1)} %`; };
+
+        // --- Chart Initialization ---
+        function initCharts() {
+            // Chart options for more defined grid lines (0.4 opacity)
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        type: 'category',
+                        title: { display: true, text: 'Time', color: '#ccc' },
+                        grid: { color: 'rgba(255, 255, 255, 0.4)' }, 
+                        ticks: { color: '#ccc' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fff' } },
+                    tooltip: { mode: 'index', intersect: false }
+                }
+            };
+
+            // 1. Distance Chart
+            const distanceCtx = document.getElementById('distanceChart').getContext('2d');
+            distanceChart = new Chart(distanceCtx, {
+                type: 'line',
+                data: {
+                    labels: dataQueue.t,
+                    datasets: [
+                        { label: 'Distance (cm)', data: dataQueue.distance, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                        { label: 'Setpoint (cm)', data: dataQueue.setpoint, borderColor: '#10b981', borderWidth: 2, pointRadius: 0, borderDash: [5, 5], tension: 0.1 }
+                    ]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        ...chartOptions.scales,
+                        y: { 
+                            ...chartOptions.scales.y, 
+                            reverse: true, // Invert Y-axis
+                            title: { display: true, text: 'Distance (cm)', color: '#ccc' }, 
+                            min: 0, // Removed max to allow auto-scaling
+                            grid: { color: 'rgba(255, 255, 255, 0.4)' } 
+                        }
+                    }
+                }
+            });
+
+            // 2. Fan Chart
+            const fanCtx = document.getElementById('fanChart').getContext('2d');
+            fanChart = new Chart(fanCtx, {
+                type: 'line',
+                data: {
+                    labels: dataQueue.t,
+                    datasets: [
+                        { label: 'Fan Output (%)', data: dataQueue.fanOutput, yAxisID: 'yOutput', borderColor: '#fcd34d', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                        { label: 'Fan RPM', data: dataQueue.fanRPM, yAxisID: 'yRPM', borderColor: '#fb7185', borderWidth: 2, pointRadius: 0, tension: 0.1 }
+                    ]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        x: chartOptions.scales.x,
+                        yOutput: {
+                            type: 'linear', position: 'left', title: { display: true, text: 'Output (%)', color: '#fcd34d' },
+                            grid: { color: 'rgba(255, 255, 255, 0.4)' }, ticks: { color: '#fcd34d', callback: (value) => `${value}%` },
+                            min: 0, max: 100
+                        },
+                        yRPM: {
+                            type: 'linear', position: 'right', title: { display: true, text: 'RPM', color: '#fb7185' },
+                            grid: { drawOnChartArea: false }, ticks: { color: '#fb7185', callback: (value) => `${value} RPM` },
+                            min: 0, max: 10000 
+                        }
+                    }
+                }
+            });
+
+            // 3. Congestion Chart 
+            const congestionCtx = document.getElementById('congestionChart').getContext('2d');
+            congestionChart = new Chart(congestionCtx, {
+                type: 'line',
+                data: {
+                    labels: dataQueue.t,
+                    datasets: [
+                        { label: 'Delay (ms)', data: dataQueue.delay, yAxisID: 'yDelay', borderColor: '#f97316', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                        { label: 'Latency (%)', data: dataQueue.loss, yAxisID: 'yLoss', borderColor: '#ef4444', borderWidth: 2, pointRadius: 0, tension: 0.1 },
+                        { label: 'Load Magnitude (%)', data: dataQueue.loadMagnitude, yAxisID: 'yLoad', borderColor: '#a78bfa', backgroundColor: 'rgba(167, 139, 250, 0.1)', fill: true, borderWidth: 2, pointRadius: 0, tension: 0.2 }
+                    ]
+                },
+                options: {
+                    ...chartOptions,
+                    scales: {
+                        x: chartOptions.scales.x,
+                        yDelay: {
+                            type: 'linear', position: 'left', title: { display: true, text: 'Delay (ms)', color: '#f97316' },
+                            grid: { color: 'rgba(255, 255, 255, 0.4)' }, ticks: { color: '#f97316' }, min: 0 
+                        },
+                        yLoss: {
+                            type: 'linear', position: 'right', title: { display: true, text: 'Latency (%)', color: '#ef4444' },
+                            grid: { drawOnChartArea: false }, ticks: { color: '#ef4444' }, min: 0, max: 55 // Adjusted max
+                        },
+                        yLoad: {
+                            type: 'linear', position: 'right', title: { display: true, text: 'Load (%)', color: '#a78bfa' },
+                            grid: { drawOnChartArea: false }, ticks: { color: '#a78bfa' }, min: 0, max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Chart Update Loop ---
+        function updateCharts() {
+            if (dataQueue.t.length === 0) return;
+
+            // Enforce size constraint
+            while (dataQueue.t.length > CHART_HISTORY_SIZE) {
+                for (const key in dataQueue) {
+                    if (dataQueue.hasOwnProperty(key)) {
+                        dataQueue[key].shift();
+                    }
+                }
+            }
+
+            // Update all chart data
+            distanceChart.data.labels = dataQueue.t;
+            distanceChart.data.datasets[0].data = dataQueue.distance;
+            distanceChart.data.datasets[1].data = dataQueue.setpoint;
+
+            fanChart.data.labels = dataQueue.t;
+            fanChart.data.datasets[0].data = dataQueue.fanOutput;
+            fanChart.data.datasets[1].data = dataQueue.fanRPM;
+
+            congestionChart.data.labels = dataQueue.t;
+            congestionChart.data.datasets[0].data = dataQueue.delay;
+            congestionChart.data.datasets[1].data = dataQueue.loss;
+            congestionChart.data.datasets[2].data = dataQueue.loadMagnitude;
+
+            // Redraw
+            distanceChart.update('none'); 
+            fanChart.update('none');
+            congestionChart.update('none');
+        }
+        
+        // Initialize everything on window load
+        window.onload = function() {
+            initCharts();
+            
+            // Set up the recurring timer to update the charts
+            setInterval(updateCharts, UPDATE_INTERVAL_MS);
+
+            // Initialize status display
+            updateStatusDisplay('STOPPED', false, 'none');
+        }
+    </script>
+</body>
+</html>

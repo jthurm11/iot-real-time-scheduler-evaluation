@@ -1,0 +1,15 @@
+[Unit]
+Description=IoT Project Dashboard
+After=network-online.target
+
+# The placeholder names within '@' get replaced during 'setup_nodes.sh'.
+[Service]
+ExecStart=/usr/bin/env python3 @@INSTALL_DIR@@/web_app/master_controller.py
+WorkingDirectory=@@INSTALL_DIR@@/web_app
+StandardOutput=journal
+StandardError=journal
+Restart=always
+User=@@SERVICE_USER@@
+
+[Install]
+WantedBy=multi-user.target

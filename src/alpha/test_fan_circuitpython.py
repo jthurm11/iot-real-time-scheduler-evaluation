@@ -16,6 +16,8 @@ import board
 import busio
 import sys # Added for system exit
 import os  # Added for file operations
+import socket
+import json
 
 try:
     # We must import from emc2101_lut to access advanced PWM configuration methods.
@@ -69,6 +71,16 @@ def check_board_type():
         # Assumes any non-CM4 architecture is a Pi 3 or Pi Zero (e.g., 9000c1, a02082)
         print(f"Hardware Check OK: Revision {revision} detected. Compatible board found.")
 
+def rpm_sender(fan_rpm):
+    """Send RPM value via UDP."""
+    telemetry_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    current_rpm = fan_rpm
+
+    # Send a simple JSON payload with the RPM value
+    payload = json.dumps({"rpm": current_rpm})
+    telemetry_sock.sendto(payload.encode('utf-8'), ('192.168.22.2', '5007'))
+    print(f"RPM sent: {current_rpm}")
 
 def main():
     """
@@ -133,7 +145,10 @@ def main():
                 
                 print(f"   Fan Speed: {fan_rpm} RPM")
                 print(f"   Internal Temp: {internal_temp:.2f} C")
-                
+
+                # Send RPM via UDP
+                rpm_sender(fan_rpm)
+
             except Exception as e:
                 # This ensures the script continues even if one read fails.
                 print(f"   Warning: Could not read sensor data. Error: {e}")
