@@ -126,9 +126,16 @@ def sensor_data_listener(listen_ip, port):
                 data, _ = sock.recvfrom(1024)
                 try:
                     packet = json.loads(data.decode())
+
+                    # Fix: Extract the raw duty cycle (0-255) to show as percentage
+                    raw_duty = packet.get("fan_output_duty")
+                    if raw_duty is not None and isinstance(raw_duty, (int, float)):
+                        scaled_duty = round((raw_duty / 255.0) * 100)
+
                     with status_lock:
                         system_status["current_height"] = packet.get("current_height", system_status["current_height"])
-                        system_status["fan_output_duty"] = packet.get("fan_output_duty", system_status["fan_output_duty"])
+                        #system_status["fan_output_duty"] = packet.get("fan_output_duty", system_status["fan_output_duty"])
+                        system_status["fan_output_duty"] = scaled_duty
                         system_status["pid_status"] = packet.get("pid_status", system_status["pid_status"])
                         system_status["master_timestamp"] = time.time()
                 except json.JSONDecodeError:
