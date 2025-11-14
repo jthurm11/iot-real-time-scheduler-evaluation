@@ -71,7 +71,7 @@ sensor_ip = "127.0.0.1"
 sensor_command_port = 5004
 sensor_telemetry_port = 5006
 fan_telemetry_port = 5007
-web_app_port = 8080
+web_app_port = 8000
 web_app_ip = "0.0.0.0" # Listen on all interfaces
 
 # --- CONFIGURATION LOADING ---
@@ -162,7 +162,7 @@ def fan_data_listener(listen_ip, port):
                 try:
                     packet = json.loads(data.decode())
                     with status_lock:
-                        system_status["current_rpm"] = packet.get("rpm", system_status["current_rpm"])
+                        system_status["current_rpm"] = packet.get("fan_rpm", system_status["current_rpm"])
                         system_status["master_timestamp"] = time.time()
                 except json.JSONDecodeError:
                     logger.warning("Received invalid JSON from fan node.")
