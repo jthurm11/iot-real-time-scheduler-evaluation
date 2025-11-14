@@ -45,9 +45,10 @@ app.config['SECRET_KEY'] = 'your_secret_key_here' # Needed for session managemen
 # Use message_queue if running multiple instances, but not needed for single instance
 socketio = SocketIO(app, async_mode='eventlet') 
 
+# FIX: Changed 'height' to 'distance' throughout the code
 # --- SYSTEM STATE ---
 system_status = {
-    "current_height": 0.0,
+    "current_distance": 0.0,
     "current_rpm": 0,
     "fan_output_duty": 0.0,
     "pid_status": PID_STATUS,
@@ -116,7 +117,7 @@ def update_status_file(filename, key, value):
 # --- DATA LISTENERS ---
 
 def sensor_data_listener(listen_ip, port):
-    """Listens for ball height and PID status updates from the sensor node."""
+    """Listens for ball distance and PID status updates from the sensor node."""
     global system_status
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         try:
@@ -133,7 +134,7 @@ def sensor_data_listener(listen_ip, port):
                         scaled_duty = round((raw_duty / 255.0) * 100)
 
                     with status_lock:
-                        system_status["current_height"] = packet.get("current_height", system_status["current_height"])
+                        system_status["current_distance"] = packet.get("current_distance", system_status["current_distance"])
                         #system_status["fan_output_duty"] = packet.get("fan_output_duty", system_status["fan_output_duty"])
                         system_status["fan_output_duty"] = scaled_duty
                         system_status["pid_status"] = packet.get("pid_status", system_status["pid_status"])
