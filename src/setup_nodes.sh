@@ -268,6 +268,7 @@ install_project() {
     fi
     sudo chown -R $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR"
     sudo find "$INSTALL_DIR" -type f -name "*.py" -exec chmod +x {} \;
+    sudo find "$INSTALL_DIR" -type f -name "*.sh" -exec chmod +x {} \;
 
     log_message ${func} "Project files copied and ownership set to $INSTALL_DIR." WARNING
 
