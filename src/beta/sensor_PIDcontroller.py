@@ -58,7 +58,7 @@ fan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 # --- PID INSTANCE ---
 # Initialize with defaults; settings will be updated by config loader
 pid = PID(
-    Kp=180, Ki=2.0, Kd=0.8,
+    Kp=50, Ki=0.2, Kd=4.0,
     setpoint=current_state["pid_setpoint"],
     sample_time=current_state["sample_time"],
     output_limits=(0, 255),
@@ -91,43 +91,56 @@ def load_network_config():
 
 def update_runtime_configs(pid_controller):
     """
-    Periodically loads SETPOINT and CONGESTION from files.
-    Uses try/except FileNotFoundError to check for file presence without os.path.exists.
+    Periodically loads SETPOINT, OSCILLATION, and CONGESTION from files.
     """
     global current_state
-    
-    # 1. Load Setpoint
+
+    # 1. Load Setpoint + Oscillation Settings
     try:
         with open(SETPOINT_CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            new_setpoint = config.get("PID_SETPOINT", current_state["pid_setpoint"])
-            
+
+            base_setpoint = config.get("PID_SETPOINT", current_state["pid_setpoint"])
+
+            # New oscillation fields
+            oscillation_enabled = config.get("OSCILLATION_ENABLED", False)
+            osc_a = config.get("OSCILLATION_A", 18.0)
+            osc_b = config.get("OSCILLATION_B", 28.0)
+            period = config.get("OSCILLATION_PERIOD_SEC", 7)
+
             with state_lock:
-                current_state["pid_setpoint"] = new_setpoint
-                # Update the PID controller instance immediately
-                pid_controller.setpoint = new_setpoint
-            
+                current_state["oscillation_enabled"] = oscillation_enabled
+                current_state["oscillation_a"] = osc_a
+                current_state["oscillation_b"] = osc_b
+                current_state["period"] = period
+
+                # If oscillation is OFF → use base setpoint like before
+                if not oscillation_enabled:
+                    current_state["pid_setpoint"] = base_setpoint
+                    pid_controller.setpoint = base_setpoint
+
     except FileNotFoundError:
         logger.debug(f"Setpoint config file not found: {SETPOINT_CONFIG_FILE}")
     except Exception as e:
         logger.debug(f"Failed to load setpoint config: {e}")
 
-    # 2. Load Congestion
+    # 2. Load Congestion Config
     try:
         with open(CONGESTION_CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            # Master Controller sends delay in MS
             new_delay_ms = config.get("CONGESTION_DELAY", current_state["delay"])
             new_loss_rate = config.get("PACKET_LOSS_RATE", current_state["loss_rate"])
-            
+
             with state_lock:
                 current_state["delay"] = new_delay_ms
                 current_state["loss_rate"] = new_loss_rate
-            
+
     except FileNotFoundError:
         logger.debug(f"Congestion config file not found: {CONGESTION_CONFIG_FILE}")
     except Exception as e:
         logger.debug(f"Failed to load congestion config: {e}")
+
+
 
 # ---- ULTRASONIC SENSOR FUNCTION ----
 
@@ -176,7 +189,23 @@ def pid_control_thread_func(pid_controller):
         
         # 1. Update PID/Congestion Configuration from files (every loop cycle)
         update_runtime_configs(pid_controller)
+	
+	        # Oscillation Logic
+        with state_lock:
+            if current_state.get("oscillation_enabled", False):
+                a = current_state["oscillation_a"]
+                b = current_state["oscillation_b"]
+                period = current_state["period"]
 
+                # Determine if we are in the A-phase or B-phase
+                cycle = int(time.time() / period) % 2
+                target = a if cycle == 0 else b
+
+                # Update PID setpoint
+                pid_controller.setpoint = target
+                current_state["pid_setpoint"] = target
+
+	
         # 2. Sensor Read
         height = get_distance_cm()
         
