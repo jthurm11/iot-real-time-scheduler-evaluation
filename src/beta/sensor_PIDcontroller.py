@@ -58,7 +58,7 @@ fan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 # --- PID INSTANCE ---
 # Initialize with defaults; settings will be updated by config loader
 pid = PID(
-    Kp=50, Ki=0.2, Kd=4.0,
+    Kp=60, Ki=0.8, Kd=6.0,
     setpoint=current_state["pid_setpoint"],
     sample_time=current_state["sample_time"],
     output_limits=(0, 255),
@@ -177,75 +177,93 @@ def get_distance_cm():
 
 # ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
 def pid_control_thread_func(pid_controller):
-    """
-    Core thread: Reads sensor, computes PID output, sends fan command, applies congestion.
-    """
     global current_state
     
     logger.info("PID Control loop starting...")
 
     while not stop_event.is_set():
-        current_time = time.time()
-        
-        # 1. Update PID/Congestion Configuration from files (every loop cycle)
+        loop_start = time.time()
+
+        # 1. Load configs
         update_runtime_configs(pid_controller)
-	
-	        # Oscillation Logic
-        with state_lock:
-            if current_state.get("oscillation_enabled", False):
-                a = current_state["oscillation_a"]
-                b = current_state["oscillation_b"]
-                period = current_state["period"]
 
-                # Determine if we are in the A-phase or B-phase
-                cycle = int(time.time() / period) % 2
-                target = a if cycle == 0 else b
+        # 2. Oscillation Logic (MUST be here, not indented)
+	# Oscillation Logic
+	with state_lock:
+	    if current_state.get("oscillation_enabled", False):
+	        a = current_state["oscillation_a"]
+	        b = current_state["oscillation_b"]
+	        period = current_state["period"]
 
-                # Update PID setpoint
-                pid_controller.setpoint = target
-                current_state["pid_setpoint"] = target
+	        # Determine current oscillation target
+	        cycle = int(time.time() / period) % 2
+	        target = a if cycle == 0 else b
 
-	
-        # 2. Sensor Read
+	        # RESET INTEGRAL IF SETPOINT CHANGED
+	        if target != previous_target:
+        	    pid_controller.clear()   # resets integral & derivative memory
+	            previous_target = target
+
+        	# Apply new setpoint
+	        pid_controller.setpoint = target
+	        current_state["pid_setpoint"] = target
+
+
+        # 3. Sensor Read
         height = get_distance_cm()
-        
-        # 3. PID Compute
-        output = pid_controller.compute(height)
 
-        # 4. Command Preparation and Send
+        # 4. PID Compute
+        output = pid_controller.compute(height)
         duty = int(max(0, min(255, output)))
-        
-        # --- Inject Congestion Delay/Loss ---
-        delay_s = current_state["delay"] / 1000.0 # Convert MS to Seconds
+
+	MIN_DUTY = 60
+	MIN_DUTY = 60
+	if duty < MIN_DUTY:
+    		duty = MIN_DUTY
+	# Oscillation Logic
+with state_lock:
+    if current_state.get("oscillation_enabled", False):
+        a = current_state["oscillation_a"]
+        b = current_state["oscillation_b"]
+        period = current_state["period"]
+
+        # Determine current oscillation target
+        cycle = int(time.time() / period) % 2
+        target = a if cycle == 0 else b
+
+        # RESET INTEGRAL IF SETPOINT CHANGED
+        if target != previous_target:
+            pid_controller.clear()   # Reset integral & derivative memory
+            previous_target = target
+
+        # Apply new setpoint
+        pid_controller.setpoint = target
+        current_state["pid_setpoint"] = target
+	
+
+        # 5. Congestion Simulation
+        delay_s = current_state["delay"] / 1000.0
         loss_rate = current_state["loss_rate"]
-        
-        # Simulate delay
+
         if delay_s > 0:
             time.sleep(delay_s)
-            
+
         packet_sent = True
-        # Apply loss only to PID/Fan traffic based on loss_rate percentage
-        if loss_rate > 0.0 and random.random() * 100.0 < loss_rate:
+        if loss_rate > 0 and random.random() * 100 < loss_rate:
             packet_sent = False
-        
-        # 5. Update Shared State
+
+        # 6. Update Shared State
         with state_lock:
             current_state["current_height"] = height
             current_state["current_duty"] = duty
-            
-        # 6. Send Command
+
+        # 7. Send to Fan Node
         if packet_sent:
-            try:
-                fan_sock.sendto(str(duty).encode('utf-8'), (current_state["fan_ip"], current_state["fan_port"]))
-                logger.debug(f"FAN duty SENT: {duty:3d} | H: {height:6.2f}cm")
-            except Exception as e:
-                logger.error(f"Failed to send fan command: {e}")
-        else:
-            logger.warning(f"FAN command DROPPED (Loss Rate: {loss_rate:.1f}%)")
+            fan_sock.sendto(str(duty).encode(), (current_state["fan_ip"], current_state["fan_port"]))
 
-
-        # 7. Sleep for remaining sample time (to maintain the target frequency)
-        sleep_time = pid_controller.sample_time - (time.time() - current_time) - delay_s
+        # 8. Keep consistent loop timing
+        elapsed = time.time() - loop_start
+        sleep_time = pid_controller.sample_time - elapsed
         if sleep_time > 0:
             time.sleep(sleep_time)
 
