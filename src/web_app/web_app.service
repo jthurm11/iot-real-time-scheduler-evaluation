@@ -9,7 +9,8 @@ WorkingDirectory=@@INSTALL_DIR@@/web_app
 StandardOutput=journal
 StandardError=journal
 Restart=always
-User=@@SERVICE_USER@@
+# Run as systemd user to allow control of other services
+#User=@@SERVICE_USER@@
 
 [Install]
 WantedBy=multi-user.target

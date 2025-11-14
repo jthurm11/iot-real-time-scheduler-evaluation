@@ -187,7 +187,7 @@ def handle_setpoint_update(data):
     """Handles setpoint changes from the dashboard."""
     new_setpoint = data.get('setpoint')
     if new_setpoint is not None:
-        if update_status_file(SETPOINT_CONFIG_FILE, 'setpoint', new_setpoint):
+        if update_status_file(SETPOINT_CONFIG_FILE, 'PID_SETPOINT', new_setpoint):
             with status_lock:
                 system_status["pid_setpoint"] = new_setpoint
             emit('command_ack', {'success': True, 'message': f'Setpoint updated to {new_setpoint} cm.'})
@@ -217,29 +217,29 @@ def handle_control_command(data):
     and start/stop load. These rely on external scripts reading the config.
     """
     action = data.get('action')
-    load_type = data.get('load_type', 'none')
+    load_type = data.get('LOAD_TYPE', 'none')
 
     if action == 'start':
-        if update_status_file(SETPOINT_CONFIG_FILE, 'status', 'RUNNING'):
+        if update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'RUNNING'):
              emit('command_ack', {'success': True, 'message': 'PID set to RUNNING. Controller should start shortly.'})
         else:
             emit('command_ack', {'success': False, 'message': 'Failed to signal PID start.'})
             
     elif action == 'stop':
-        if update_status_file(SETPOINT_CONFIG_FILE, 'status', 'STOPPED'):
+        if update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED'):
              emit('command_ack', {'success': True, 'message': 'PID set to STOPPED. Controller should shut down shortly.'})
         else:
             emit('command_ack', {'success': False, 'message': 'Failed to signal PID stop.'})
 
     # The experiment_manager script handles the actual TC/Load execution based on config changes.
     elif action == 'start_load':
-        if update_status_file(CONGESTION_CONFIG_FILE, 'load_type', load_type):
+        if update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', load_type):
             emit('command_ack', {'success': True, 'message': f'Starting {load_type} background load.'})
         else:
             emit('command_ack', {'success': False, 'message': 'Failed to start background load.'})
     
     elif action == 'stop_load':
-        if update_status_file(CONGESTION_CONFIG_FILE, 'load_type', 'none'):
+        if update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', 'none'):
             emit('command_ack', {'success': True, 'message': 'Stopping background load.'})
         else:
             emit('command_ack', {'success': False, 'message': 'Failed to stop background load.'})
@@ -298,7 +298,7 @@ def status_poller():
             try:
                 with open(SETPOINT_CONFIG_FILE, 'r') as f:
                     setpoint_data = json.load(f)
-                    system_status["pid_status"] = setpoint_data.get('status', 'STOPPED')
+                    system_status["pid_status"] = setpoint_data.get('PID_STATUS', 'STOPPED')
             except:
                 pass # Use existing status if file read fails
 

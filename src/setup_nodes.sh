@@ -48,7 +48,7 @@ ALPHA_SERVICES=(
 BETA_SERVICES=(
     "sensor_controller"
     "web_app"
-    "tc_controller"
+    #"tc_controller" # By default, we don't want rules applied
 )
 
 # --- Utility Functions ---

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-import pigpio
+# DUAL-MODE FAN CONTROLLER: Prioritizes CircuitPython (EMC2101) then falls back to SIMPLE_PWM mode.
+# Includes fan status reporting back to the Sensor Node (port 5007).
 import time
 import socket
 import threading
 import json
+import sys
 import logging
 
 # --- LOGGING SETUP ---
@@ -34,9 +36,58 @@ global_rpm = 0
 rpm_lock = threading.Lock()
 stop_event = threading.Event()
 
-# --- UTILITY SETUP ---
-pi = pigpio.pi()
+# --- HARDWARE DETECTION & SETUP ---
+HARDWARE_MODE = None
+fan = None # Global variable for the fan object
 
+# 1. Attempt CircuitPython (adafruit-emc2101) imports first
+try:
+    import board
+    import busio
+    # We must import from emc2101_lut to access advanced PWM configuration methods.
+    from adafruit_emc2101.emc2101_lut import EMC2101_LUT as EMC2101 
+    HARDWARE_MODE = 'CIRCUITPY'
+    logger.info("Hardware Mode: CIRCUITPY.")
+except ImportError:
+    # 2. Fallback to Simple PWM Mode (for devices without EMC2101 hardware)
+    import pigpio
+    HARDWARE_MODE = 'SIMPLE_PWM'
+    logger.info("Hardware Mode: SIMPLE_PWM")
+
+# --- SHARED/UNIFIED HARDWARE INTERFACE FUNCTIONS ---
+
+def init_fan_hardware():
+    """Initializes the I2C connection and sets required fan configuration."""
+    global fan
+
+    if HARDWARE_MODE == 'CIRCUITPY':
+        try:
+            # Uses the default I2C bus (usually bus 1 on Raspberry Pi)
+            i2c = busio.I2C(board.SCL, board.SDA) 
+            fan = EMC2101(i2c)
+            
+            # CRITICAL: Set PWM Frequency for Fan Stability
+            fan.set_pwm_clock(use_preset=False) 
+            fan.pwm_frequency = 14 
+            fan.pwm_frequency_divisor = 127 
+            
+        except Exception as e:
+            logger.error(f"{HARDWARE_MODE} Initialization Error: {e}")
+            sys.exit(1)
+            
+    elif HARDWARE_MODE == 'SIMPLE_PWM':
+        try:
+            fan = pigpio.pi()
+            fan.set_mode(PWM_PIN, pigpio.OUTPUT)
+            fan.set_PWM_frequency(PWM_PIN, FREQ)
+            fan.set_PWM_dutycycle(PWM_PIN, 0) # Start fan at 0%
+
+
+        except Exception as e:
+            logger.error(f"{HARDWARE_MODE} Initialization Error: {e}")
+            sys.exit(1)
+
+    logger.info(f"Fan Hardware initialized successfully in {HARDWARE_MODE} mode.")
 
 # --- TACHOMETER CLASS (pigpio callback for RPM measurement) ---
 class Tachometer:
@@ -88,8 +139,16 @@ def fan_receiver_thread_func():
                 # clamp to safe range
                 duty = max(0, min(255, duty))
 
-                pi.set_PWM_dutycycle(PWM_PIN, duty)
-                logger.info(f"Duty SET: {duty:3d} | From: {addr[0]}")
+                if HARDWARE_MODE == 'CIRCUITPY':
+                    # FIX: Convert 0-255 to 0-100% for CircuitPython
+                    duty_percent = int((duty / 255) * 100)
+                    duty_percent = max(0, min(100, duty_percent)) # Reclamp to be safe
+                    fan.manual_fan_speed = duty_percent
+
+                elif HARDWARE_MODE == 'SIMPLE_PWM':
+                    fan.set_PWM_dutycycle(PWM_PIN, duty)
+
+                logger.debug(f"Duty SET: {duty:3d} | From: {addr[0]}")
 
             except socket.timeout:
                 # Expected when waiting for stop_event
@@ -107,13 +166,18 @@ def fan_receiver_thread_func():
 def rpm_sender_thread_func():
     """Periodically reads the global RPM value and sends it via UDP."""
     telemetry_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    #telemetry_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) # Not sure if needed, came from old script
     logger.info(f"Sending RPM telemetry to {SENSOR_NODE_IP}:{FAN_DATA_LISTEN_PORT} every {RPM_REPORT_INTERVAL}s...")
 
     while not stop_event.is_set():
         try:
-            current_rpm = 0
-            with rpm_lock:
-                current_rpm = global_rpm
+            if HARDWARE_MODE == 'CIRCUITPY':
+                current_rpm = fan.fan_speed
+
+            elif HARDWARE_MODE == 'SIMPLE_PWM':
+                current_rpm = 0
+                with rpm_lock:
+                    current_rpm = global_rpm
 
             # Send a simple JSON payload with the RPM value
             payload = json.dumps({"fan_rpm": current_rpm})
@@ -150,12 +214,11 @@ def main():
     load_network_config()
 
     # Hardware Setup
-    pi.set_mode(PWM_PIN, pigpio.OUTPUT)
-    pi.set_PWM_frequency(PWM_PIN, FREQ)
-    pi.set_PWM_dutycycle(PWM_PIN, 0) # Start fan at 0%
-    
+    init_fan_hardware()
+
     # Tachometer Setup
-    tachometer = Tachometer(pi, TACHO_PIN, FAN_POLE_PAIRS)
+    if HARDWARE_MODE == 'SIMPLE_PWM':
+        tachometer = Tachometer(fan, TACHO_PIN, FAN_POLE_PAIRS)
 
     # Thread Setup
     command_thread = threading.Thread(target=fan_receiver_thread_func, name="CommandReceiver")
@@ -180,9 +243,14 @@ def main():
         if command_thread.is_alive(): command_thread.join()
         if telemetry_thread.is_alive(): telemetry_thread.join()
 
-        tachometer.cancel()
-        pi.set_PWM_dutycycle(PWM_PIN, 0)
-        pi.stop()
+        if HARDWARE_MODE == 'CIRCUITPY':
+            fan.manual_fan_speed = 0
+
+        elif HARDWARE_MODE == 'SIMPLE_PWM':
+            tachometer.cancel()
+            fan.set_PWM_dutycycle(PWM_PIN, 0)
+            fan.stop()
+
         logger.info("Fan controller stopped and resources cleaned up.")
 
 if __name__ == "__main__":
