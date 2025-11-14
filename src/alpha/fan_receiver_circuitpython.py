@@ -140,7 +140,10 @@ def fan_receiver_thread_func():
                 duty = max(0, min(255, duty))
 
                 if HARDWARE_MODE == 'CIRCUITPY':
-                    fan.manual_fan_speed = duty
+                    # FIX: Convert 0-255 to 0-100% for CircuitPython
+                    duty_percent = int((duty / 255) * 100)
+                    duty_percent = max(0, min(100, duty_percent)) # Reclamp to be safe
+                    fan.manual_fan_speed = duty_percent
 
                 elif HARDWARE_MODE == 'SIMPLE_PWM':
                     fan.set_PWM_dutycycle(PWM_PIN, duty)
