@@ -216,30 +216,29 @@ def pid_control_thread_func(pid_controller):
         output = pid_controller.compute(height)
         duty = int(max(0, min(255, output)))
 
-	MIN_DUTY = 60
-	MIN_DUTY = 60
-	if duty < MIN_DUTY:
-    		duty = MIN_DUTY
-	# Oscillation Logic
-with state_lock:
-    if current_state.get("oscillation_enabled", False):
-        a = current_state["oscillation_a"]
-        b = current_state["oscillation_b"]
-        period = current_state["period"]
-
-        # Determine current oscillation target
-        cycle = int(time.time() / period) % 2
-        target = a if cycle == 0 else b
-
-        # RESET INTEGRAL IF SETPOINT CHANGED
-        if target != previous_target:
-            pid_controller.clear()   # Reset integral & derivative memory
-            previous_target = target
-
-        # Apply new setpoint
-        pid_controller.setpoint = target
-        current_state["pid_setpoint"] = target
+		MIN_DUTY = 60
+		if duty < MIN_DUTY:
+			duty = MIN_DUTY
 	
+		# Oscillation Logic
+		with state_lock:
+		    if current_state.get("oscillation_enabled", False):
+		        a = current_state["oscillation_a"]
+		        b = current_state["oscillation_b"]
+		        period = current_state["period"]
+		
+		        # Determine current oscillation target
+		        cycle = int(time.time() / period) % 2
+		        target = a if cycle == 0 else b
+		
+		        # RESET INTEGRAL IF SETPOINT CHANGED
+		        if target != previous_target:
+		            pid_controller.clear()   # Reset integral & derivative memory
+		            previous_target = target
+		
+		        # Apply new setpoint
+		        pid_controller.setpoint = target
+		        current_state["pid_setpoint"] = target
 
         # 5. Congestion Simulation
         delay_s = current_state["delay"] / 1000.0
