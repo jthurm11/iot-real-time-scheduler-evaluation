@@ -6,6 +6,7 @@ monkey.patch_all()
 
 # Standard libraries
 import os
+import subprocess
 import json
 import time
 import math
@@ -244,10 +245,28 @@ def handle_control_command(data):
             emit('command_ack', {'success': False, 'message': 'Failed to stop background load.'})
             
     elif action in ['apply_tc', 'remove_tc']:
-        if update_status_file(CONGESTION_CONFIG_FILE, 'tc_action', action):
-            emit('command_ack', {'success': True, 'message': f'Signalled action: {action.replace("_", " ").upper()}.'})
-        else:
-            emit('command_ack', {'success': False, 'message': f'Failed to signal TC action: {action}.'})
+        # Map the web action to the systemctl command
+        systemctl_command = 'start' if action == 'apply_tc' else 'stop'
+        service_name = 'tc_controller.service'
+        command = ['systemctl', systemctl_command, service_name]
+        try:
+            # check=True raises an exception for non-zero exit codes (failure)
+            # text=True handles input/output as strings
+            # capture_output=True captures stdout/stderr
+            # Add a timeout in case systemctl hangs
+            result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+            emit('command_ack', {'success': True, 'message': f'Successfully executed: {systemctl_command.upper()} {service_name}.'})
+        except subprocess.CalledProcessError as e:
+            # 4. Handle command failure (e.g., systemctl failed to start the service)
+            error_msg = f"Systemctl failed: {e.stderr.strip()}"
+            print(f"ERROR executing TC command: {error_msg}")
+            emit('command_ack', {'success': False, 'message': f'TC Action Failed: {error_msg}'})
+        except subprocess.TimeoutExpired:
+            # 5. Handle timeout
+            emit('command_ack', {'success': False, 'message': f'TC Action Timed Out. Systemctl unresponsive.'})
+        except FileNotFoundError:
+            # 6. Handle case where 'systemctl' command itself is not found
+            emit('command_ack', {'success': False, 'message': f'Systemctl command not found. Is Systemd installed?'})
 
 
 # --- POLLER THREAD ---

@@ -101,7 +101,7 @@ def update_runtime_configs(pid_controller):
     try:
         with open(SETPOINT_CONFIG_FILE, 'r') as f:
             config = json.load(f)
-            new_setpoint = config.get("PID_SETPOINT", current_state["pid_setpoint"])
+            new_setpoint = config.get("setpoint", current_state["pid_setpoint"])
             
             with state_lock:
                 current_state["pid_setpoint"] = new_setpoint
