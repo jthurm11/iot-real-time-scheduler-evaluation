@@ -33,6 +33,7 @@ ALPHA_PACKAGES=(
 )
 # Define packages needed for Beta (Sensor Manager)
 BETA_PACKAGES=(
+    "python3-rpi.gpio"
     "python3-flask"
     "python3-flask-socketio"
     "python3-gevent"
@@ -47,6 +48,7 @@ ALPHA_SERVICES=(
 BETA_SERVICES=(
     "sensor_controller"
     "web_app"
+    "tc_controller"
 )
 
 # --- Utility Functions ---

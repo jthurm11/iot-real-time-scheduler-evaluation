@@ -1,0 +1,16 @@
+[Unit]
+Description=Real-Time Traffic Control (TC) Rules Application
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+#This service is for running a setup command and then waiting for a stop command.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/project/web_app/tc_controller.sh apply-tc
+ExecStop=/opt/project/web_app/tc_controller.sh remove-tc
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
