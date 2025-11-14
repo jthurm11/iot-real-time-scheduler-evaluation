@@ -64,6 +64,7 @@ pid = PID(
     output_limits=(0, 255),
     controller_direction='REVERSE'
 )
+previous_target = None
 
 # ---- CONFIGURATION LOADING ----
 
@@ -176,71 +177,49 @@ def get_distance_cm():
 
 
 # ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
+# place this near the top of your file (GLOBAL)
+previous_target = None
+
+
 def pid_control_thread_func(pid_controller):
-    global current_state
-    
+    global current_state, previous_target
+
     logger.info("PID Control loop starting...")
 
     while not stop_event.is_set():
         loop_start = time.time()
 
-        # 1. Load configs
+        # 1. Load runtime configs (setpoints, congestion, etc.)
         update_runtime_configs(pid_controller)
 
-        # 2. Oscillation Logic (MUST be here, not indented)
-	# Oscillation Logic
-	with state_lock:
-	    if current_state.get("oscillation_enabled", False):
-	        a = current_state["oscillation_a"]
-	        b = current_state["oscillation_b"]
-	        period = current_state["period"]
+        # 2. Oscillation Logic (simple — NO PID reset)
+        with state_lock:
+            if current_state.get("oscillation_enabled", False):
+                a = current_state["oscillation_a"]
+                b = current_state["oscillation_b"]
+                period = current_state["period"]
 
-	        # Determine current oscillation target
-	        cycle = int(time.time() / period) % 2
-	        target = a if cycle == 0 else b
+                # Pick A or B based on time
+                cycle = int(time.time() / period) % 2
+                target = a if cycle == 0 else b
 
-	        # RESET INTEGRAL IF SETPOINT CHANGED
-	        if target != previous_target:
-        	    pid_controller.clear()   # resets integral & derivative memory
-	            previous_target = target
+                # Update setpoint (no reset logic)
+                pid_controller.setpoint = target
+                current_state["pid_setpoint"] = target
 
-        	# Apply new setpoint
-	        pid_controller.setpoint = target
-	        current_state["pid_setpoint"] = target
-
-
-        # 3. Sensor Read
+        # 3. Read ultrasonic sensor height
         height = get_distance_cm()
 
-        # 4. PID Compute
+        # 4. PID compute
         output = pid_controller.compute(height)
         duty = int(max(0, min(255, output)))
 
-		MIN_DUTY = 60
-		if duty < MIN_DUTY:
-			duty = MIN_DUTY
-	
-		# Oscillation Logic
-		with state_lock:
-		    if current_state.get("oscillation_enabled", False):
-		        a = current_state["oscillation_a"]
-		        b = current_state["oscillation_b"]
-		        period = current_state["period"]
-		
-		        # Determine current oscillation target
-		        cycle = int(time.time() / period) % 2
-		        target = a if cycle == 0 else b
-		
-		        # RESET INTEGRAL IF SETPOINT CHANGED
-		        if target != previous_target:
-		            pid_controller.clear()   # Reset integral & derivative memory
-		            previous_target = target
-		
-		        # Apply new setpoint
-		        pid_controller.setpoint = target
-		        current_state["pid_setpoint"] = target
+        # Enforce minimum duty to avoid sudden drops
+        MIN_DUTY = 60
+        if duty < MIN_DUTY:
+            duty = MIN_DUTY
 
-        # 5. Congestion Simulation
+        # 5. Congestion simulation
         delay_s = current_state["delay"] / 1000.0
         loss_rate = current_state["loss_rate"]
 
@@ -251,23 +230,22 @@ def pid_control_thread_func(pid_controller):
         if loss_rate > 0 and random.random() * 100 < loss_rate:
             packet_sent = False
 
-        # 6. Update Shared State
+        # 6. Update shared state
         with state_lock:
             current_state["current_height"] = height
             current_state["current_duty"] = duty
 
-        # 7. Send to Fan Node
+        # 7. Send fan command
         if packet_sent:
             fan_sock.sendto(str(duty).encode(), (current_state["fan_ip"], current_state["fan_port"]))
 
-        # 8. Keep consistent loop timing
+        # 8. Maintain loop timing
         elapsed = time.time() - loop_start
         sleep_time = pid_controller.sample_time - elapsed
         if sleep_time > 0:
             time.sleep(sleep_time)
 
     logger.info("PID Control loop stopped.")
-
 
 # ---- THREAD 2: TELEMETRY SENDER (Sends status to Master Controller) ----
 def telemetry_sender_thread_func():
