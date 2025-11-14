@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-# CRITICAL FIX: Import and monkey-patch eventlet for proper WebSocket support
-import eventlet
-eventlet.monkey_patch() 
+from gevent import monkey
+from gevent.pywsgi import WSGIServer
+from geventwebsocket.handler import WebSocketHandler
+monkey.patch_all()
+
+# Standard libraries
 import os
 import json
 import time
@@ -42,8 +45,7 @@ logger = logging.getLogger(__name__)
 # --- WEB & SOCKETIO SETUP ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key_here' # Needed for session management
-# Use message_queue if running multiple instances, but not needed for single instance
-socketio = SocketIO(app, async_mode='eventlet') 
+socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*") 
 
 # FIX: Changed 'height' to 'distance' throughout the code
 # --- SYSTEM STATE ---
@@ -295,7 +297,7 @@ def status_poller():
             socketio.emit('status_update', system_status)
         
         # Poll every 250ms (or whatever is appropriate for the system)
-        eventlet.sleep(0.25) # Use eventlet.sleep instead of time.sleep
+        time.sleep(0.25)
 
 def telemetry_listener(listen_ip, port):
     """
@@ -314,20 +316,21 @@ if __name__ == '__main__':
     poller_thread.start()
 
     # Start the new continuous telemetry listener threads
-    web_app_listen_ip = '0.0.0.0' # Always listen on all interfaces
-    sensor_listener = threading.Thread(target=sensor_data_listener, args=(web_app_listen_ip, sensor_telemetry_port), daemon=True)
-    fan_listener = threading.Thread(target=fan_data_listener, args=(web_app_listen_ip, fan_telemetry_port), daemon=True)
+    sensor_listener = threading.Thread(target=sensor_data_listener, args=(web_app_ip, sensor_telemetry_port), daemon=True)
+    fan_listener = threading.Thread(target=fan_data_listener, args=(web_app_ip, fan_telemetry_port), daemon=True)
     sensor_listener.start()
     fan_listener.start()
 
     logger.info(f"Master Controller is running. Access the dashboard at: http://{sensor_ip}:{web_app_port}")
 
     try:
-        # CRITICAL FIX: Running with Eventlet is mandatory for WebSockets
-        logger.info("Starting SocketIO server with Eventlet...")
-        # Since we monkey-patched eventlet, socketio.run automatically uses it.
-        # We remove allow_unsafe_werkzeug=True.
-        socketio.run(app, host=web_app_ip, port=web_app_port) 
+        # NEW FIX: Starting SocketIO server with Gevent WSGIServer
+        logger.info("Starting SocketIO server with Gevent WSGI Server...")
+
+        # The WSGIServer handles both Flask/HTTP and SocketIO connections
+        http_server = WSGIServer((web_app_ip, web_app_port), app, handler_class=WebSocketHandler)
+        http_server.serve_forever()
+
     except KeyboardInterrupt:
         logger.info("Controller stopped manually.") 
     except Exception as e:

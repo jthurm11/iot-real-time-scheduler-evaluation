@@ -35,7 +35,8 @@ ALPHA_PACKAGES=(
 BETA_PACKAGES=(
     "python3-flask"
     "python3-flask-socketio"
-    "python3-eventlet"
+    "python3-gevent"
+    "python3-gevent-websocket"
 )
 
 # --- SYSTEMD SERVICES ---

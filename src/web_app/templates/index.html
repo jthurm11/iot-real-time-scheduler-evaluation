@@ -211,7 +211,7 @@
         
         // FIX: Connect to the default namespace ('/') as configured in master_controller.py
         const socket = io({ 
-            transports: ['websocket', 'polling'],
+            transports: ['websocket'], // Force WebSocket only for real-time
             reconnectionAttempts: 5,
             timeout: 5000 
         });
