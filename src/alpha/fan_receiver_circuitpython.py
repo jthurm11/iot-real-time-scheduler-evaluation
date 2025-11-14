@@ -148,7 +148,7 @@ def fan_receiver_thread_func():
                 elif HARDWARE_MODE == 'SIMPLE_PWM':
                     fan.set_PWM_dutycycle(PWM_PIN, duty)
 
-                logger.info(f"Duty SET: {duty:3d} | From: {addr[0]}")
+                logger.debug(f"Duty SET: {duty:3d} | From: {addr[0]}")
 
             except socket.timeout:
                 # Expected when waiting for stop_event

@@ -1,0 +1,6 @@
+# Build/compile artifacts
+__pycache__/
+
+# Dependency directories
+logs/
+.venv/
