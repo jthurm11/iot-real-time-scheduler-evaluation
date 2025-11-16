@@ -40,12 +40,14 @@ BETA_PACKAGES=(
     "python3-gevent"
     "python3-gevent-websocket"
     "iperf3"
+    "stress"
 )
 
 # --- SYSTEMD SERVICES ---
 ALPHA_SERVICES=(
     "pigpiod"
     "fan_controller"
+    "iperf3"      # Runs server-side connection for background load
 )
 BETA_SERVICES=(
     "sensor_controller"
