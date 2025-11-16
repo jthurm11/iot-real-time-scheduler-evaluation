@@ -203,6 +203,9 @@ def fan_data_listener(listen_ip, port):
         finally:
             logger.info("Fan data listener stopped.")
 
+def background_load_data_listener(listen_ip, port):
+    """Listens for Background Loag Magnitude data to update the chart."""
+    
 
 # --- SOCKETIO (WEB DASHBOARD) HANDLERS ---
 

@@ -155,9 +155,20 @@
                 
                 <!-- Load Control (Renamed) -->
                 <div class="space-y-2">
+                    <!--
                     <p class="text-sm text-gray-400">Background Load Type: <span id="current-load-type-display" class="font-semibold text-white">NONE</span></p>
+                    -->
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-md font-semibold text-red-300">Backgroud Load Type</p>
+                        <!-- Load Type Status Pill & Title -->
+                        <div id="load-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
+                            <div id="load-dot" class="w-2 h-2 rounded-full"></div>
+                            <span id="load-status-text"></span>
+                        </div>
+                    </div>
+
                     <select id="load-type-select" class="w-full p-1 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-green-500 focus:border-green-500">
-                        <option value="none" selected>none (No Load)</option>
+                        <option value="none" selected>none (Select a background load)</option>
                         <option value="iperf">iperf (Network)</option>
                         <option value="stress">stress (CPU)</option>
                     </select>
@@ -169,13 +180,14 @@
 
                 <!-- TC Actions (Renamed & Colors Flipped) -->
                 <div class="border-t border-gray-700 pt-3 space-y-2">
-                    <p class="text-md font-semibold text-red-300">Traffic Control Rules</p>
-                    <!-- TC Status Pill & Title -->
-                    <div id="tc-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
-                        <div id="tc-dot" class="w-2 h-2 rounded-full"></div>
-                        <span id="tc-status-text"></span>
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-md font-semibold text-red-300">Traffic Control Rules</p>
+                        <!-- TC Status Pill & Title -->
+                        <div id="tc-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
+                            <div id="tc-dot" class="w-2 h-2 rounded-full"></div>
+                            <span id="tc-status-text"></span>
+                        </div>
                     </div>
-
                     <div class="flex flex-wrap gap-2">
                         <button id="apply-tc-btn" class="flex-1 px-3 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('apply_tc')" disabled>Apply TC</button>
                         <button id="remove-tc-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('remove_tc')" disabled>Remove TC</button>
@@ -244,17 +256,18 @@
         const stopBtn = document.getElementById('stop-btn');
 
         // Load Controls (NEW)
-        //const loadStatusPill = document.getElementById('load-status-pill');
-        //const loadDot = document.getElementById('load-dot');
-        //const loadText = document.getElementById('load-text');
+        const loadStatusPill = document.getElementById('load-status-pill');
+        const loadDot = document.getElementById('load-dot');
+        const loadStatusText = document.getElementById('load-status-text');
         const loadTypeSelect = document.getElementById('load-type-select');
         const startLoadBtn = document.getElementById('start-load-btn');
         const stopLoadBtn = document.getElementById('stop-load-btn');
-        const currentLoadTypeDisplay = document.getElementById('current-load-type-display'); // Renamed to avoid collision
+        //const currentLoadTypeDisplay = document.getElementById('current-load-type-display'); // Renamed to avoid collision
+
         // TC Controls
-        //const tcStatusPill = document.getElementById('tc-status-pill');
-        //const tcDot = document.getElementById('tc-dot');
-        //const tcStatusText = document.getElementById('tc-status-text');
+        const tcStatusPill = document.getElementById('tc-status-pill');
+        const tcDot = document.getElementById('tc-dot');
+        const tcStatusText = document.getElementById('tc-status-text');
         const applyTcBtn = document.getElementById('apply-tc-btn');
         const removeTcBtn = document.getElementById('remove-tc-btn');
 
@@ -309,11 +322,20 @@
             pidStatusText.classList.remove('text-red-500', 'text-green-500');
             pidStatusText.classList.add(isRunning ? 'text-green-500' : 'text-red-500');
             
-            currentLoadTypeDisplay.textContent = loadType.toUpperCase();
+            //currentLoadTypeDisplay.textContent = loadType.toUpperCase();
+
+            loadStatusText.textContent = isLoadRunning ? 'RUNNING' : 'STOPPED';
+            loadStatusText.classList.remove('text-red-500', 'text-green-500');
+            loadStatusText.classList.add(isLoadRunning ? 'text-white' : 'text-red-500');
+            loadStatusPill.className = `flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300 ${isLoadRunning ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}`;
+            loadDot.className = `w-2 h-2 rounded-full ${isLoadRunning ? 'bg-white' : 'bg-gray-400'}`;
             
-            //tcStatusText.textContent = isTcApplied ? 'APPLIED' : 'REMOVED';
-            //tcStatusText.classList.remove('text-red-500', 'text-green-500');
-            //tcStatusText.classList.add(isTcApplied ? 'text-green-500' : 'text-red-500');
+            tcStatusText.textContent = isTcApplied ? 'APPLIED' : 'REMOVED';
+            tcStatusText.classList.remove('text-red-500', 'text-green-500');
+            tcStatusText.classList.add(isTcApplied ? 'text-white' : 'text-red-500');
+            tcStatusPill.className = `flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300 ${isTcApplied ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}`;
+            tcDot.className = `w-2 h-2 rounded-full ${isTcApplied ? 'bg-white' : 'bg-gray-400'}`;
+
             
             // --- Button Control Logic (Requires PID Running + Secondary Condition) ---
             
@@ -381,7 +403,8 @@
             }
             
             const loadType = data.experiment_name || 'none';
-            
+            const tcApplied = data.tc_applied === true || data.tc_applied === 'APPLIED' ? 'APPLIED' : 'REMOVED';
+
             // Pass the client-side TC state to update the display
             updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', loadType, isTcApplied);
             
