@@ -25,7 +25,8 @@ NETWORK_CONFIG_FILE = '/opt/project/common/network_config.json'
 SETPOINT_CONFIG_FILE = '/opt/project/common/setpoint_config.json'
 # Config for Network Congestion (read by network_injector.py/sensor_PIDcontroller.py)
 CONGESTION_CONFIG_FILE = '/opt/project/common/congestion_config.json'
-# New: Path for the experiment status file (will be written by experiment_manager.sh)
+# Path for the experiment status file (will be written by experiment_manager.sh)
+# NOTE: Deprecating in favor of updating congestion file instead
 EXPERIMENT_STATUS_FILE = '/tmp/current_experiment.txt'
 
 # --- NETWORK CONFIGURATION (Defaults) ---
@@ -57,6 +58,7 @@ system_status = {
     "pid_status": PID_STATUS,
     "pid_setpoint": 20.0,
     "experiment_name": CURRENT_EXPERIMENT,
+    "traffc_status": 'remove_tc',
     "delay": 0,
     "loss_rate": 0.0,
     "load_magnitude": 0,
@@ -116,6 +118,33 @@ def update_status_file(filename, key, value):
     except Exception as e:
         logger.error(f"Failed to update {filename}: {e}")
         return False
+
+# --- INITIALIZE CONFIG FILES ---
+def initialize_config_files():
+    """Ensures the congestion/setpoint config files exists with default values."""
+    update_status_file(CONGESTION_CONFIG_FILE, 'CONGESTION_DELAY', 0.0)
+    update_status_file(CONGESTION_CONFIG_FILE, 'PACKET_LOSS_RATE', 0.0)
+    update_status_file(SETPOINT_CONFIG_FILE, 'PID_SETPOINT', 20)
+    update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED')
+
+    # Ensure traffic rules are cleared on start
+    command = ['systemctl', 'stop', 'tc_controller.service']
+    result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+    if result:
+        #logger.info("Traffic control rules cleared for startup")
+        update_status_file(CONGESTION_CONFIG_FILE, 'TC_ACTION', 'remove_tc')
+    else:
+        logger.error("Traffic control rules NOT cleared for startup")
+    
+    # Ensure load set cleared on start
+    command = ['systemctl', 'stop', 'experiment_controller.service']
+    result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+    if result:
+        #logger.info("Traffic control rules cleared for startup")
+        update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', 'none')
+    else:
+        logger.error("Experiment NOT cleared for startup")
+
 
 # --- DATA LISTENERS ---
 
@@ -201,8 +230,8 @@ def handle_congestion_update(data):
     loss = data.get('loss')
     
     if delay is not None and loss is not None:
-        if update_status_file(CONGESTION_CONFIG_FILE, 'delay', delay) and \
-           update_status_file(CONGESTION_CONFIG_FILE, 'loss', loss):
+        if update_status_file(CONGESTION_CONFIG_FILE, 'CONGESTION_DELAY', delay) and \
+           update_status_file(CONGESTION_CONFIG_FILE, 'PACKET_LOSS_RATE', loss):
             with status_lock:
                 system_status["delay"] = delay
                 system_status["loss_rate"] = loss
@@ -216,39 +245,38 @@ def handle_control_command(data):
     Handles generic commands like start/stop PID, apply/remove TC, 
     and start/stop load. These rely on external scripts reading the config.
     """
+    # Get action & load_type from the incoming data payload (sent by the web client)
     action = data.get('action')
-    load_type = data.get('LOAD_TYPE', 'none')
 
-    if action == 'start':
-        if update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'RUNNING'):
-             emit('command_ack', {'success': True, 'message': 'PID set to RUNNING. Controller should start shortly.'})
-        else:
-            emit('command_ack', {'success': False, 'message': 'Failed to signal PID start.'})
-            
-    elif action == 'stop':
-        if update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED'):
-             emit('command_ack', {'success': True, 'message': 'PID set to STOPPED. Controller should shut down shortly.'})
-        else:
-            emit('command_ack', {'success': False, 'message': 'Failed to signal PID stop.'})
+    # This handles the Start/Stop PID button 
+    if action in ['start', 'stop']:
+        new_pid_status = 'RUNNING' if action == 'start' else 'STOPPED'
 
-    # The experiment_manager script handles the actual TC/Load execution based on config changes.
-    elif action == 'start_load':
-        if update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', load_type):
-            emit('command_ack', {'success': True, 'message': f'Starting {load_type} background load.'})
+        # PLACEHOLDER: Put external command here to make this action useful.
+
+        pid_success = update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', new_pid_status)
+
+        if pid_success:
+            emit('command_ack', {'success': True, 'message': f'PID set to {new_pid_status}. Controller should {action} shortly.'})
         else:
-            emit('command_ack', {'success': False, 'message': 'Failed to start background load.'})
-    
-    elif action == 'stop_load':
-        if update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', 'none'):
-            emit('command_ack', {'success': True, 'message': 'Stopping background load.'})
-        else:
-            emit('command_ack', {'success': False, 'message': 'Failed to stop background load.'})
-            
-    elif action in ['apply_tc', 'remove_tc']:
+            emit('command_ack', {'success': False, 'message': f'Failed to signal PID {action}.'})
+
+    elif action in ['start_load', 'stop_load']:
         # Map the web action to the systemctl command
-        systemctl_command = 'start' if action == 'apply_tc' else 'stop'
-        service_name = 'tc_controller.service'
+        systemctl_command = 'start' if action == 'start_load' else 'stop'
+        service_name = 'experiment_controller.service'
         command = ['systemctl', systemctl_command, service_name]
+
+        # This writes the desired load type (iperf, stress, or none) to the config file.
+        # We expect that experiment_manager.sh reads the config file to determine which load to run.
+        load_type = data.get('load_type', 'none') 
+        load_success = update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', load_type)
+
+        if load_success and action == 'stop_load':
+            emit('command_ack', {'success': True, 'message': f'Sending experiment termination.'})
+        elif load_success:
+            emit('command_ack', {'success': True, 'message': f'Sending experiment start with load type: {load_type}.'})
+
         try:
             # check=True raises an exception for non-zero exit codes (failure)
             # text=True handles input/output as strings
@@ -257,15 +285,43 @@ def handle_control_command(data):
             result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
             emit('command_ack', {'success': True, 'message': f'Successfully executed: {systemctl_command.upper()} {service_name}.'})
         except subprocess.CalledProcessError as e:
-            # 4. Handle command failure (e.g., systemctl failed to start the service)
+            # Handle command failure (e.g., systemctl failed to start the service)
+            error_msg = f"Systemctl failed: {e.stderr.strip()}"
+            print(f"ERROR executing command: {error_msg}")
+            emit('command_ack', {'success': False, 'message': f'Action Failed: {error_msg}'})
+        except subprocess.TimeoutExpired:
+            # Handle timeout
+            emit('command_ack', {'success': False, 'message': f'Action Timed Out. Systemctl unresponsive.'})
+        except FileNotFoundError:
+            # Handle case where 'systemctl' command itself is not found
+            emit('command_ack', {'success': False, 'message': f'Systemctl command not found. Is Systemd installed?'})
+
+    elif action in ['apply_tc', 'remove_tc']:
+        # Map the web action to the systemctl command
+        systemctl_command = 'start' if action == 'apply_tc' else 'stop'
+        service_name = 'tc_controller.service'
+        command = ['systemctl', systemctl_command, service_name]
+
+        # Write the applied ruleset to the config file.
+        tc_action_success = update_status_file(CONGESTION_CONFIG_FILE, 'TC_ACTION', action)
+
+        try:
+            # check=True raises an exception for non-zero exit codes (failure)
+            # text=True handles input/output as strings
+            # capture_output=True captures stdout/stderr
+            # Add a timeout in case systemctl hangs
+            result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+            emit('command_ack', {'success': True, 'message': f'Successfully executed: {systemctl_command.upper()} {service_name}.'})
+        except subprocess.CalledProcessError as e:
+            # Handle command failure (e.g., systemctl failed to start the service)
             error_msg = f"Systemctl failed: {e.stderr.strip()}"
             print(f"ERROR executing TC command: {error_msg}")
             emit('command_ack', {'success': False, 'message': f'TC Action Failed: {error_msg}'})
         except subprocess.TimeoutExpired:
-            # 5. Handle timeout
+            # Handle timeout
             emit('command_ack', {'success': False, 'message': f'TC Action Timed Out. Systemctl unresponsive.'})
         except FileNotFoundError:
-            # 6. Handle case where 'systemctl' command itself is not found
+            # Handle case where 'systemctl' command itself is not found
             emit('command_ack', {'success': False, 'message': f'Systemctl command not found. Is Systemd installed?'})
 
 
@@ -287,12 +343,12 @@ def status_poller():
     global system_status
     while not stop_event.is_set():
         # Read the latest experiment status from the file written by the experiment manager
-        current_experiment_type = read_experiment_status()
+        #current_experiment_type = read_experiment_status()
 
         # Update the system_status object and then emit
         with status_lock:
             # Update the experiment name
-            system_status["experiment_name"] = current_experiment_type
+            #system_status["experiment_name"] = current_experiment_type
             
             # Read PID status from config file (as set by the dashboard)
             try:
@@ -306,8 +362,10 @@ def status_poller():
             try:
                 with open(CONGESTION_CONFIG_FILE, 'r') as f:
                     congestion_data = json.load(f)
-                    system_status["delay"] = congestion_data.get('delay', 0)
-                    system_status["loss_rate"] = congestion_data.get('loss', 0.0)
+                    system_status["delay"] = congestion_data.get('CONGESTION_DELAY', 0)
+                    system_status["loss_rate"] = congestion_data.get('PACKET_LOSS_RATE', 0.0)
+                    system_status["experiment_name"] = congestion_data.get('LOAD_TYPE', 'none')
+                    system_status["traffc_status"] = congestion_data.get('TC_ACTION', 'remove_tc')
             except:
                 pass # Use existing settings if file read fails
             
@@ -328,6 +386,7 @@ def telemetry_listener(listen_ip, port):
 
 # --- MAIN EXECUTION ---
 if __name__ == '__main__':
+    initialize_config_files()
     load_network_config()
 
     # Start the status poller thread (sends system_status to dashboard clients)
