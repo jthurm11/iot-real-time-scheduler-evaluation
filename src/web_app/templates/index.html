@@ -78,6 +78,15 @@
                     <span id="current-distance-value">0.0</span>
                 </div>
             </div>
+            <!-- Oscillation Status -->
+            <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center flex flex-col justify-center">
+                <p class="text-sm font-medium text-gray-400">Oscillation</p>
+                <div class="digital-display text-md text-green-300 mt-1 space-y-1 leading-tight">
+                    <p><span id="osc-current-sp">Current: --</span></p>
+                    <p><span id="osc-next-sp">Next: --</span></p>
+                    <p><span id="osc-switch">Switch in: --</span></p>
+                </div>
+            </div>
             <!-- Fan Output (Color changed to amber-400 to match chart line) -->
             <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
                 <p class="text-sm font-medium text-gray-400">Fan Output (%) / RPM</p>
@@ -145,6 +154,41 @@
                         <span id="loss-value" class="text-lg font-bold text-red-300">0.0 %</span>
                     </div>
                     <input type="range" id="loss-slider" min="0.0" max="50.0" step="0.5" value="0.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                </div>
+
+                <!-- Oscillation Settings -->
+                <div class="border-t border-gray-700 pt-3">
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-md font-semibold text-indigo-300">Oscillation Settings</label>
+                    </div>
+
+                    <label class="flex items-center mb-3 text-sm text-gray-300">
+                        <input type="checkbox" id="osc-enabled" class="mr-2">
+                        Enable Oscillation
+                    </label>
+
+                    <div class="mb-3">
+                        <label class="text-sm text-gray-400">Setpoint A (cm)</label>
+                        <input id="osc-a" type="number" min="5" max="50" step="0.5"
+                            class="w-full p-2 mt-1 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="text-sm text-gray-400">Setpoint B (cm)</label>
+                        <input id="osc-b" type="number" min="5" max="50" step="0.5"
+                            class="w-full p-2 mt-1 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="text-sm text-gray-400">Oscillation Period (seconds)</label>
+                        <input id="osc-period" type="number" min="5" max="120" step="1"
+                            class="w-full p-2 mt-1 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                    </div>
+
+                    <button onclick="sendOscillation()"
+                        class="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold transition duration-150 text-sm">
+                        Apply Oscillation
+                    </button>
                 </div>
 
             </div>
@@ -252,6 +296,10 @@
         const lastUpdateTime = document.getElementById('last-update-time');
 
         // PID Controls
+        const oscCurrentSp = document.getElementById('osc-current-sp');
+        const oscNextSp = document.getElementById('osc-next-sp');
+        const oscSwitch = document.getElementById('osc-switch');
+
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
 
@@ -294,11 +342,13 @@
             t: [], // Time labels
             distance: [],
             setpoint: [],
+            oscA: [],        // constant horizontal line for Oscillation A
+            oscB: [],        // constant horizontal line for Oscillation B
             fanOutput: [],
             fanRPM: [],
-            delay: [], // For Congestion Chart (Latency MS)
-            loss: [],  // For Congestion Chart (Latency %)
-            loadMagnitude: [] // For Congestion Chart
+            delay: [], // For Congestion Chart
+            loss: [],  // For Congestion Chart
+            loadMagnitude: []
         };
         
         let distanceChart, fanChart, congestionChart;
@@ -418,6 +468,18 @@
             delayValueSpan.textContent = `${Math.round(data.delay)} ms`;
             lossValueSpan.textContent = `${parseFloat(data.loss_rate).toFixed(1)} %`;
 
+            // ---- OSCILLATION STATUS UPDATE ----
+            if (data.pid_setpoint !== undefined) {
+                oscCurrentSp.textContent = `Current: ${parseFloat(data.pid_setpoint).toFixed(1)} cm`;
+            }
+
+            if (data.pid_next_setpoint !== undefined) {
+                oscNextSp.textContent = `Next: ${parseFloat(data.pid_next_setpoint).toFixed(1)} cm`;
+            }
+
+            if (data.pid_switch_in !== undefined) {
+                oscSwitch.textContent = `Switch in: ${parseFloat(data.pid_switch_in).toFixed(1)} s`;
+            }
 
             // --- Real-time Data Queue Update ---
             const now = new Date();
@@ -429,6 +491,18 @@
             dataQueue.t.push(timeLabel);
             dataQueue.distance.push(data.current_distance);
             dataQueue.setpoint.push(data.pid_setpoint);
+            
+            // --- Add constant OSC_A and OSC_B horizontal lines ---
+            if (data.oscillation_a !== undefined && data.oscillation_b !== undefined) {
+                dataQueue.oscA.push(parseFloat(data.oscillation_a));
+                dataQueue.oscB.push(parseFloat(data.oscillation_b));
+            } else {
+                // fallback to keep lines continuous
+                dataQueue.oscA.push(dataQueue.oscA[dataQueue.oscA.length - 1] || null);
+                dataQueue.oscB.push(dataQueue.oscB[dataQueue.oscB.length - 1] || null);
+            }
+
+            // FIX 4: Use correct keys for chart data
             dataQueue.fanOutput.push(data.fan_output_duty || 0.0); 
             dataQueue.fanRPM.push(data.current_rpm || 0);
             
@@ -475,6 +549,21 @@
             }
         }
 
+        function sendOscillation() {
+            const enabled = document.getElementById("osc-enabled").checked;
+            const a = parseFloat(document.getElementById("osc-a").value);
+            const b = parseFloat(document.getElementById("osc-b").value);
+            const period = parseFloat(document.getElementById("osc-period").value);
+
+            socket.emit("set_oscillation", {
+                enabled: enabled,
+                a: a,
+                b: b,
+                period: period
+            });
+
+            console.log("Sent oscillation update:", { enabled, a, b, period });
+        }
 
         // --- Slider Event Listeners (Auto-Apply on Change) ---
         setpointSlider.oninput = () => {
@@ -518,15 +607,48 @@
                 }
             };
             
-            // 1. Distance Chart
+            // 1. Distance Chart (UPDATED with Oscillation A & B reference lines)
             const distanceCtx = document.getElementById('distanceChart').getContext('2d');
             distanceChart = new Chart(distanceCtx, {
                 type: 'line',
                 data: {
                     labels: dataQueue.t,
                     datasets: [
-                        { label: 'Distance (cm)', data: dataQueue.distance, borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0, tension: 0.1 },
-                        { label: 'Setpoint (cm)', data: dataQueue.setpoint, borderColor: '#10b981', borderWidth: 2, pointRadius: 0, borderDash: [5, 5], tension: 0.1 }
+                        {
+                            label: 'Distance (cm)',
+                            data: dataQueue.distance,
+                            borderColor: '#38bdf8',   // sky-400
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Current Setpoint (cm)',
+                            data: dataQueue.setpoint,
+                            borderColor: '#10b981',   // emerald-500
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            borderDash: [5, 5],
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Setpoint A',
+                            data: dataQueue.oscA,
+                            borderColor: 'rgba(99, 102, 241, 0.25)',   // lighter indigo
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            borderDash: [4, 4],
+                            tension: 0
+                        },
+                        {
+                            label: 'Setpoint B',
+                            data: dataQueue.oscB,
+                            borderColor: 'rgba(248, 113, 113, 0.25)',   // lighter red
+                            borderWidth: 1,
+                            pointRadius: 0,
+                            borderDash: [4, 4],
+                            tension: 0
+                        }
                     ]
                 },
                 options: {
@@ -535,10 +657,10 @@
                         ...chartOptions.scales,
                         y: { 
                             ...chartOptions.scales.y, 
-                            reverse: true, // Invert Y-axis
-                            title: { display: true, text: 'Distance (cm)', color: '#ccc' }, 
-                            min: 0, // Removed max to allow auto-scaling
-                            grid: { color: 'rgba(255, 255, 255, 0.4)' } 
+                            reverse: true,
+                            title: { display: true, text: 'Distance (cm)', color: '#ccc' },
+                            min: 0,
+                            grid: { color: 'rgba(255, 255, 255, 0.4)' }
                         }
                     }
                 }
@@ -623,6 +745,8 @@
             distanceChart.data.labels = dataQueue.t;
             distanceChart.data.datasets[0].data = dataQueue.distance;
             distanceChart.data.datasets[1].data = dataQueue.setpoint;
+            distanceChart.data.datasets[2].data = dataQueue.oscA; 
+            distanceChart.data.datasets[3].data = dataQueue.oscB;
 
             fanChart.data.labels = dataQueue.t;
             fanChart.data.datasets[0].data = dataQueue.fanOutput;
