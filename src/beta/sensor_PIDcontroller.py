@@ -6,6 +6,9 @@ import threading
 import json
 import logging
 import random  # Needed for packet loss simulation
+import csv
+import os
+from datetime import datetime
 
 # Assuming pid_controller.py is available in the environment
 from pid_controller import PID
@@ -64,14 +67,32 @@ fan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # --- PID INSTANCE ---
 pid = PID(
-    Kp=140, Ki=0.8, Kd=1.5,
+    Kp=145, Ki=0.8, Kd=1.5,
     setpoint=current_state["pid_setpoint"],
     sample_time=current_state["sample_time"],
     output_limits=(0, 255),
     controller_direction='REVERSE'
 )
 # --- MINIMUM FAN DUTY (prevents free-fall on downward motion) ---
-MIN_DUTY = 80   # Tune between 50–80 depending on your system
+MIN_DUTY = 80
+
+# --- LOG FILE SETUP ---
+LOG_DIR = "/opt/project/logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOG_FILENAME = f"{LOG_DIR}/sensor_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+log_file_lock = threading.Lock()
+
+def write_log_row(data: dict):
+    """Thread-safe CSV logging."""
+    with log_file_lock:
+        file_exists = os.path.exists(LOG_FILENAME)
+        with open(LOG_FILENAME, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=data.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(data)
+
 
 # ---- CONFIGURATION LOADING ----
 
@@ -273,6 +294,22 @@ def pid_control_thread_func(pid_controller: PID):
         else:
             logger.warning(f"FAN command DROPPED (Loss Rate: {loss_rate:.1f}%)")
 
+                # --- LOG THIS LOOP ---
+        log_data = {
+            "timestamp": time.time(),
+            "distance": distance,
+            "setpoint": current_state["pid_setpoint"],
+            "duty": duty,
+            "delay_ms": current_state["delay"],
+            "loss_rate": current_state["loss_rate"],
+            "osc_a": current_state["oscillation_a"],
+            "osc_b": current_state["oscillation_b"],
+            "osc_period": current_state["oscillation_period"],
+            "next_setpoint": current_state["pid_next_setpoint"],
+            "switch_in": current_state["pid_switch_in"],
+        }
+        write_log_row(log_data)
+
         # 8. Maintain loop timing (respect sample_time)
         elapsed = time.time() - loop_start
         sleep_time = pid_controller.sample_time - elapsed
@@ -338,6 +375,7 @@ def main():
     logger.info(
         f"Congestion initialized (Delay: {current_state['delay']}ms, Loss: {current_state['loss_rate']}%)"
     )
+    logger.info(f"Logging data to: {LOG_FILENAME}")
 
     pid_thread = threading.Thread(
         target=pid_control_thread_func, args=(pid,), name="PIDControl"
