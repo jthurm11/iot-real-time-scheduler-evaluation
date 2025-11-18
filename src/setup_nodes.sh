@@ -30,6 +30,7 @@ ALPHA_PACKAGES=(
     #"python3-matplotlib"
     "pigpiod"
     #"i2c-tools"
+    "iperf3"
 )
 # Define packages needed for Beta (Sensor Manager)
 BETA_PACKAGES=(
@@ -38,17 +39,22 @@ BETA_PACKAGES=(
     "python3-flask-socketio"
     "python3-gevent"
     "python3-gevent-websocket"
+    "iperf3"
+    "stress-ng"
+    "python3-psutil"
 )
 
 # --- SYSTEMD SERVICES ---
 ALPHA_SERVICES=(
     "pigpiod"
     "fan_controller"
+    "iperf3"      # Runs server-side connection for background load
 )
 BETA_SERVICES=(
     "sensor_controller"
     "web_app"
-    #"tc_controller" # By default, we don't want rules applied
+    #"tc_controller"         # By default, we don't want rules applied
+    #"experiment_controller" # By default, we don't want this running
 )
 
 # --- Utility Functions ---

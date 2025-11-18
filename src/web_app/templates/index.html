@@ -85,6 +85,20 @@
                     <span id="fan-output-value">0.0%</span> / <span id="fan-rpm-value">0 RPM</span>
                 </div>
             </div>
+            <!-- Current Load Type (New Card) -->
+             <!--
+            <div id="load-status-card" class="bg-gray-800 p-3 rounded-lg shadow-xl text-center flex flex-col justify-center">
+                <p class="text-sm font-medium text-gray-400">Current Load Type</p>
+                <p id="current-load-type" class="text-lg font-bold text-gray-400 mt-1">NONE</p>
+            </div>
+            -->
+            <!-- TC Rule Status (New Card) -->
+             <!--
+            <div id="tc-status-card" class="bg-gray-800 p-3 rounded-lg shadow-xl text-center flex flex-col justify-center">
+                <p class="text-sm font-medium text-gray-400">TC Rules Status</p>
+                <p id="tc-status-text" class="text-lg font-bold text-red-500 mt-1">REMOVED</p>
+            </div>
+            -->
             <!-- Last Update -->
             <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
                 <p class="text-sm font-medium text-gray-400">Last Update</p>
@@ -112,7 +126,6 @@
                         <label for="setpoint-slider" class="text-md font-semibold text-teal-300">Setpoint (cm)</label>
                         <span id="setpoint-value" class="text-lg font-bold text-teal-300">20.0 cm</span>
                     </div>
-                    <!-- Range updated to 5.0 - 50.0 -->
                     <input type="range" id="setpoint-slider" min="5.0" max="50.0" step="0.5" value="20.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
                 </div>
 
@@ -131,7 +144,6 @@
                         <label for="loss-slider" class="text-md font-semibold text-red-300">Latency (%)</label>
                         <span id="loss-value" class="text-lg font-bold text-red-300">0.0 %</span>
                     </div>
-                    <!-- Range updated to 0.0 - 50.0 -->
                     <input type="range" id="loss-slider" min="0.0" max="50.0" step="0.5" value="0.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
                 </div>
 
@@ -143,9 +155,20 @@
                 
                 <!-- Load Control (Renamed) -->
                 <div class="space-y-2">
-                    <p class="text-sm text-gray-400">Background Load Type: <span id="current-load-type" class="font-semibold text-white">None</span></p>
+                    <!--
+                    <p class="text-sm text-gray-400">Background Load Type: <span id="current-load-type-display" class="font-semibold text-white">NONE</span></p>
+                    -->
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-md font-semibold text-red-300">Backgroud Load Type</p>
+                        <!-- Load Type Status Pill & Title -->
+                        <div id="load-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
+                            <div id="load-dot" class="w-2 h-2 rounded-full"></div>
+                            <span id="load-status-text"></span>
+                        </div>
+                    </div>
+
                     <select id="load-type-select" class="w-full p-1 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-green-500 focus:border-green-500">
-                        <option value="none" selected>none (No Load)</option>
+                        <option value="none" selected>none (Select a background load)</option>
                         <option value="iperf">iperf (Network)</option>
                         <option value="stress">stress (CPU)</option>
                     </select>
@@ -157,11 +180,16 @@
 
                 <!-- TC Actions (Renamed & Colors Flipped) -->
                 <div class="border-t border-gray-700 pt-3 space-y-2">
-                    <p class="text-md font-semibold text-red-300">Traffic Control Rules</p>
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-md font-semibold text-red-300">Traffic Control Rules</p>
+                        <!-- TC Status Pill & Title -->
+                        <div id="tc-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
+                            <div id="tc-dot" class="w-2 h-2 rounded-full"></div>
+                            <span id="tc-status-text"></span>
+                        </div>
+                    </div>
                     <div class="flex flex-wrap gap-2">
-                        <!-- Apply (Good) is green -->
                         <button id="apply-tc-btn" class="flex-1 px-3 py-2 bg-teal-600 hover:bg-teal-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('apply_tc')" disabled>Apply TC</button>
-                        <!-- Remove (Bad) is red -->
                         <button id="remove-tc-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('remove_tc')" disabled>Remove TC</button>
                     </div>
                 </div>
@@ -222,16 +250,28 @@
         const fanOutputValue = document.getElementById('fan-output-value');
         const fanRPMValue = document.getElementById('fan-rpm-value');
         const lastUpdateTime = document.getElementById('last-update-time');
-        const currentLoadType = document.getElementById('current-load-type');
 
+        // PID Controls
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
-        const applyTcBtn = document.getElementById('apply-tc-btn');
-        const removeTcBtn = document.getElementById('remove-tc-btn');
+
+        // Load Controls (NEW)
+        const loadStatusPill = document.getElementById('load-status-pill');
+        const loadDot = document.getElementById('load-dot');
+        const loadStatusText = document.getElementById('load-status-text');
+        const loadTypeSelect = document.getElementById('load-type-select');
         const startLoadBtn = document.getElementById('start-load-btn');
         const stopLoadBtn = document.getElementById('stop-load-btn');
-        const loadTypeSelect = document.getElementById('load-type-select');
+        //const currentLoadTypeDisplay = document.getElementById('current-load-type-display'); // Renamed to avoid collision
 
+        // TC Controls
+        const tcStatusPill = document.getElementById('tc-status-pill');
+        const tcDot = document.getElementById('tc-dot');
+        const tcStatusText = document.getElementById('tc-status-text');
+        const applyTcBtn = document.getElementById('apply-tc-btn');
+        const removeTcBtn = document.getElementById('remove-tc-btn');
+
+        // Sliders
         const setpointSlider = document.getElementById('setpoint-slider');
         const setpointValueSpan = document.getElementById('setpoint-value');
         const delaySlider = document.getElementById('delay-slider');
@@ -239,6 +279,10 @@
         const lossSlider = document.getElementById('loss-slider');
         const lossValueSpan = document.getElementById('loss-value');
         const messageBox = document.getElementById('message-box');
+
+        // --- Client-side State Management ---
+        // This tracks the TC status since the server status update payload doesn't include it.
+        let isTcApplied = false;
 
         // --- Chart Configuration & Data Queue ---
         // Chart history is calculated by (Time Desired) / (Update Interval)
@@ -261,24 +305,67 @@
 
         // --- Utility Functions ---
 
-        function updateStatusDisplay(status, running, loadType) {
+        /**
+         * Updates all button states and status displays based on current status.
+         * @param {string} pidStatus - PID status ('RUNNING' or 'STOPPED').
+         * @param {boolean} running - True if PID is running.
+         * @param {string} loadType - Current load type ('none', 'iperf', 'stress').
+         * @param {boolean} tcApplied - True if TC rules are applied.
+         */
+        function updateStatusDisplay(pidStatus, running, loadType, tcApplied) {
             const isRunning = running === true;
-            pidStatusText.textContent = isRunning ? 'RUNNING' : 'STOPPED';
+            const isLoadRunning = loadType !== 'none';
+            const isTcApplied = tcApplied === true;
+
+            // --- Status Text Updates ---
+            pidStatusText.textContent = pidStatus;
             pidStatusText.classList.remove('text-red-500', 'text-green-500');
             pidStatusText.classList.add(isRunning ? 'text-green-500' : 'text-red-500');
             
-            // Update button states
+            //currentLoadTypeDisplay.textContent = loadType.toUpperCase();
+
+            loadStatusText.textContent = isLoadRunning ? 'RUNNING' : 'STOPPED';
+            loadStatusText.classList.remove('text-red-500', 'text-green-500');
+            loadStatusText.classList.add(isLoadRunning ? 'text-white' : 'text-red-500');
+            loadStatusPill.className = `flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300 ${isLoadRunning ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}`;
+            loadDot.className = `w-2 h-2 rounded-full ${isLoadRunning ? 'bg-white' : 'bg-gray-400'}`;
+            
+            tcStatusText.textContent = isTcApplied ? 'APPLIED' : 'REMOVED';
+            tcStatusText.classList.remove('text-red-500', 'text-green-500');
+            tcStatusText.classList.add(isTcApplied ? 'text-white' : 'text-red-500');
+            tcStatusPill.className = `flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300 ${isTcApplied ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-300'}`;
+            tcDot.className = `w-2 h-2 rounded-full ${isTcApplied ? 'bg-white' : 'bg-gray-400'}`;
+
+            
+            // --- Button Control Logic (Requires PID Running + Secondary Condition) ---
+            
+            // PID Start/Stop (No secondary condition)
             startBtn.disabled = isRunning;
             stopBtn.disabled = !isRunning;
-            applyTcBtn.disabled = !isRunning;
-            removeTcBtn.disabled = !isRunning;
-            
-            // Load buttons state
-            startLoadBtn.disabled = loadType !== 'none' || !isRunning;
-            stopLoadBtn.disabled = loadType === 'none' || !isRunning;
 
-            currentLoadType.textContent = loadType.toUpperCase();
-            loadTypeSelect.value = loadType;
+            // Load Buttons
+            // Start Load: Disabled if PID is STOPPED OR if a load is already running
+            startLoadBtn.disabled = !isRunning || isLoadRunning;
+            // Stop Load: Disabled if PID is STOPPED OR if NO load is running
+            stopLoadBtn.disabled = !isRunning || !isLoadRunning;
+
+            // TC Buttons
+            // Apply TC: Disabled if PID is STOPPED OR if TC rules are already applied
+            applyTcBtn.disabled = !isRunning || isTcApplied;
+            // Remove TC: Disabled if PID is STOPPED OR if TC rules are NOT applied
+            removeTcBtn.disabled = !isRunning || !isTcApplied;
+            
+            // --- FIX FOR SELECT LIST REVERSION ---
+            // We only force the loadTypeSelect value if a load is currently running (locking it). 
+            // Otherwise, we let the user's manual selection persist.
+            if (isLoadRunning) {
+                // Lock the selection to the current running load and disable interaction
+                loadTypeSelect.value = loadType;
+                loadTypeSelect.disabled = true;
+            } else {
+                // If no load is running, enable the select list. The value remains whatever the user last picked.
+                loadTypeSelect.disabled = false;
+            }
         }
 
         function showMessage(message, success) {
@@ -305,21 +392,21 @@
         socket.on('status_update', (data) => {
             console.log('Received status update:', data);
 
-            // FIX 1: Update status panel metrics using correct keys from master_controller.py
             currentDistanceValue.textContent = parseFloat(data.current_distance).toFixed(1);
-            fanOutputValue.textContent = `${parseFloat(data.fan_output_duty || 0.0).toFixed(1)}%`; // Use fan_output_duty
-            fanRPMValue.textContent = `${parseInt(data.current_rpm || 0)} RPM`; // Use current_rpm
+            fanOutputValue.textContent = `${parseFloat(data.fan_output_duty || 0.0).toFixed(1)}%`;
+            fanRPMValue.textContent = `${parseInt(data.current_rpm || 0)} RPM`;
             
-            // FIX 2: Convert master_timestamp (seconds) to a readable time string
             if (data.master_timestamp) {
                 lastUpdateTime.textContent = new Date(data.master_timestamp * 1000).toLocaleTimeString();
             } else {
                 lastUpdateTime.textContent = 'N/A';
             }
             
-            // FIX 3: Update PID and Load Status using experiment_name
             const loadType = data.experiment_name || 'none';
-            updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', loadType);
+            const tcApplied = data.tc_applied === true || data.tc_applied === 'APPLIED' ? 'APPLIED' : 'REMOVED';
+
+            // Pass the client-side TC state to update the display
+            updateStatusDisplay(data.pid_status, data.pid_status === 'RUNNING', loadType, isTcApplied);
             
             // Update sliders to reflect current config
             setpointSlider.value = parseFloat(data.pid_setpoint).toFixed(1);
@@ -342,8 +429,6 @@
             dataQueue.t.push(timeLabel);
             dataQueue.distance.push(data.current_distance);
             dataQueue.setpoint.push(data.pid_setpoint);
-            
-            // FIX 4: Use correct keys for chart data
             dataQueue.fanOutput.push(data.fan_output_duty || 0.0); 
             dataQueue.fanRPM.push(data.current_rpm || 0);
             
@@ -359,42 +444,24 @@
         
         // --- Control Functions ---
         function sendControl(action) {
-            let payload = { action: action };
-            
-            if (action === 'setpoint_update') {
-                payload.setpoint = parseFloat(setpointSlider.value);
-                socket.emit('set_setpoint', { setpoint: payload.setpoint }); // Emitting to 'set_setpoint' as per master_controller.py
-            } else if (action === 'congestion_update') {
-                payload.delay_ms = parseInt(delaySlider.value);
-                payload.loss_rate = parseFloat(lossSlider.value);
-                socket.emit('set_congestion', { delay: payload.delay_ms, loss: payload.loss_rate }); // Emitting to 'set_congestion'
-            } else if (action === 'start_load') {
-                 payload.load_type = loadTypeSelect.value;
-                 // NOTE: The Python master_controller doesn't define a listener for 'start'/'stop' actions directly,
-                 // but the experiment manager script typically monitors the config file. We'll rely on external mechanism for now.
-                 // This function needs further development based on the full system's API, but the core logic remains.
-            }
-            
-            console.log(`Sending control action: ${action}`, payload);
-            // Since the master controller defines specific handlers (set_setpoint, set_congestion), 
-            // we will only emit general 'control_command' if the action is not one of the specific handlers.
-            // For 'start'/'stop'/'apply_tc'/'remove_tc'/'start_load'/'stop_load', these need to be defined in master_controller.py 
-            // or we need a way to pass them via 'control_command'.
-            
-            // For now, removing the general control_command emit to prevent double-sends, 
-            // as setpoint and congestion are handled by their specific emits above.
-        }
-        
-        // FIX: The command handling needs to be updated to match the master_controller.py's defined listeners.
-        // We will update the sendControl function to emit to the specific endpoints defined in master_controller.py:
-        // 'set_setpoint' and 'set_congestion'. The other commands ('start', 'stop', 'apply_tc', etc.) 
-        // are currently unhandled in the provided master_controller.py snippet and would need a generic 'control_command' 
-        // handler in the backend to be processed. Let's assume a generic handler exists for simplicity 
-        // until the rest of the backend API is defined.
-
-        function sendControl(action) {
             console.log(`Sending control action: ${action}`);
             
+            // Update client-side TC state based on action
+            if (action === 'apply_tc') {
+                isTcApplied = true;
+            } else if (action === 'remove_tc') {
+                isTcApplied = false;
+            } else if (action === 'stop') { 
+                // When PID stops, TC should be removed and load should be stopped (handled by server)
+                isTcApplied = false; 
+            }
+
+            // Update client-side Experiment state
+            if (action === 'stop_load') {
+                isLoadRunning = false;
+                loadTypeSelect.value = 'none';
+            }
+
             if (action === 'setpoint_update') {
                 const newSetpoint = parseFloat(setpointSlider.value);
                 socket.emit('set_setpoint', { setpoint: newSetpoint });
@@ -403,9 +470,7 @@
                 const lossRate = parseFloat(lossSlider.value);
                 socket.emit('set_congestion', { delay: delayMs, loss: lossRate });
             } else {
-                // Generic command handler for PID/Load Start/Stop
-                // NOTE: This relies on a generic 'control_command' listener in the backend 
-                // which is currently not defined in master_controller.py, but we'll assume it's for external actions.
+                // Generic command handler for PID/Load Start/Stop/TC
                 socket.emit('control_command', { action: action, load_type: loadTypeSelect.value });
             }
         }
@@ -435,7 +500,6 @@
 
         // --- Chart Initialization ---
         function initCharts() {
-            // Chart options for more defined grid lines (0.4 opacity)
             const chartOptions = {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -453,7 +517,7 @@
                     tooltip: { mode: 'index', intersect: false }
                 }
             };
-
+            
             // 1. Distance Chart
             const distanceCtx = document.getElementById('distanceChart').getContext('2d');
             distanceChart = new Chart(distanceCtx, {
@@ -531,7 +595,7 @@
                         },
                         yLoss: {
                             type: 'linear', position: 'right', title: { display: true, text: 'Latency (%)', color: '#ef4444' },
-                            grid: { drawOnChartArea: false }, ticks: { color: '#ef4444' }, min: 0, max: 55 // Adjusted max
+                            grid: { drawOnChartArea: false }, ticks: { color: '#ef4444' }, min: 0, max: 55 
                         },
                         yLoad: {
                             type: 'linear', position: 'right', title: { display: true, text: 'Load (%)', color: '#a78bfa' },
@@ -582,8 +646,8 @@
             // Set up the recurring timer to update the charts
             setInterval(updateCharts, UPDATE_INTERVAL_MS);
 
-            // Initialize status display
-            updateStatusDisplay('STOPPED', false, 'none');
+            // Initial status display
+            updateStatusDisplay('STOPPED', false, 'none', false);
         }
     </script>
 </body>
