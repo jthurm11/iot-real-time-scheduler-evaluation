@@ -341,6 +341,7 @@ def telemetry_sender_thread_func():
                     "fan_output_duty": current_state["current_duty"],
 
                     # Extra fields for oscillation visualization
+                    "oscillation_enabled": current_state["oscillation_enabled"],
                     "oscillation_a": current_state["oscillation_a"],
                     "oscillation_b": current_state["oscillation_b"],
                     "pid_next_setpoint": current_state["pid_next_setpoint"],

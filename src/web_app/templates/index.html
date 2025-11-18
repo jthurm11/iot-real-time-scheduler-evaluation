@@ -468,6 +468,20 @@
             delayValueSpan.textContent = `${Math.round(data.delay)} ms`;
             lossValueSpan.textContent = `${parseFloat(data.loss_rate).toFixed(1)} %`;
 
+            // Sync oscillation controls with backend state
+            if (data.oscillation_enabled !== undefined) {
+                document.getElementById("osc-enabled").checked = !!data.oscillation_enabled;
+            }
+            if (data.oscillation_a !== undefined) {
+                document.getElementById("osc-a").value = parseFloat(data.oscillation_a).toFixed(1);
+            }
+            if (data.oscillation_b !== undefined) {
+                document.getElementById("osc-b").value = parseFloat(data.oscillation_b).toFixed(1);
+            }
+            if (data.oscillation_period !== undefined) {
+                document.getElementById("osc-period").value = parseFloat(data.oscillation_period).toFixed(0);
+            }
+
             // ---- OSCILLATION STATUS UPDATE ----
             if (data.pid_setpoint !== undefined) {
                 oscCurrentSp.textContent = `Current: ${parseFloat(data.pid_setpoint).toFixed(1)} cm`;

@@ -74,6 +74,8 @@ system_status = {
     "oscillation_b": 30.0,
     "pid_next_setpoint": 30.0,
     "pid_switch_in": 0.0,
+    "oscillation_enabled": False,
+    "oscillation_period": 20.0,
 
     "experiment_name": CURRENT_EXPERIMENT,
     "traffc_status": 'remove_tc',
@@ -318,10 +320,14 @@ def handle_oscillation_update(data):
 
     # Update server-side cache
     with status_lock:
+        if osc_enabled is not None:
+            system_status["oscillation_enabled"] = osc_enabled
         if osc_a is not None:
             system_status["oscillation_a"] = osc_a
         if osc_b is not None:
             system_status["oscillation_b"] = osc_b
+        if osc_period is not None:
+            system_status["oscillation_period"] = osc_period
 
     if ok:
         emit('command_ack', {'success': True, 'message': 'Oscillation settings updated.'})
@@ -465,6 +471,20 @@ def status_poller():
                     setpoint_data = json.load(f)
                     system_status["pid_setpoint"] = setpoint_data.get('PID_SETPOINT', 20.0)
                     system_status["pid_status"] = setpoint_data.get('PID_STATUS', 'STOPPED')
+
+                    # NEW: oscillation settings (keep them in sync with config + sensor)
+                    system_status["oscillation_enabled"] = setpoint_data.get(
+                        'OSCILLATION_ENABLED', system_status.get("oscillation_enabled", False)
+                    )
+                    system_status["oscillation_a"] = setpoint_data.get(
+                        'OSCILLATION_A', system_status["oscillation_a"]
+                    )
+                    system_status["oscillation_b"] = setpoint_data.get(
+                        'OSCILLATION_B', system_status["oscillation_b"]
+                    )
+                    system_status["oscillation_period"] = setpoint_data.get(
+                        'OSCILLATION_PERIOD_SEC', system_status.get("oscillation_period", 20.0)
+                    )
             except:
                 pass # Use existing status if file read fails
 
