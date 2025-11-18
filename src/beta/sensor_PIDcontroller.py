@@ -70,7 +70,8 @@ pid = PID(
     output_limits=(0, 255),
     controller_direction='REVERSE'
 )
-
+# --- MINIMUM FAN DUTY (prevents free-fall on downward motion) ---
+MIN_DUTY = 60   # Tune between 50–80 depending on your system
 
 # ---- CONFIGURATION LOADING ----
 
@@ -238,7 +239,11 @@ def pid_control_thread_func(pid_controller: PID):
 
         # 4. PID compute
         output = pid_controller.compute(distance)
-        duty = int(max(0, min(255, output)))
+        # Apply minimum fan duty to prevent free-fall
+        if output < MIN_DUTY:
+            duty = MIN_DUTY
+        else:
+            duty = int(min(255, output))
 
         # 5. Congestion simulation
         with state_lock:
