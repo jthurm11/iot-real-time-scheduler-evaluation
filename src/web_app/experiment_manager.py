@@ -1,178 +1,215 @@
-# Experiment control module.
 import threading
 import subprocess
-import json
 import time
-import sys
+import os
 import psutil
+import signal
+from typing import Optional, Union, Any
 
-# --- CONFIGURATION (Default values - should be managed by master controller) ---
-IPERF_SERVER_IP = "192.168.1.1" 
-IPERF_PORT = 5201 
-IPERF_TEST_DURATION = 5 
-IPERF_INTERVAL = IPERF_TEST_DURATION + 1 
-STRESS_INTERVAL = 1 # How often the CPU usage is reported (for stress)
-# -----------------------------------------------------------------------------
+# --- CONFIGURATION ---
+IPERF_SERVER_IP = "192.168.22.1"
+IPERF_SERVER_PORT = 5201
 
+# --- BASE CLASS ---
 class ExperimentManager:
     """
-    Base class for running background experiments (load generation or telemetry)
-    in a dedicated thread. Handles start, stop, and safe access to metrics.
+    Base class for managing long-running experiments with real-time metric updates.
+    It manages the background process, the worker thread, and shared metric access.
     """
-    def __init__(self, name="ExperimentWorker"):
-        self.metric_lock = threading.Lock()
-        self.latest_metric = 0.0 # Stores the current experiment metric (e.g., Mbps, % CPU)
+    # Default interval for the metric polling loop (can be overridden by the test script for speed)
+    interval: float = 1.0 
+    
+    def __init__(self):
+        self._metric: float = 0.0
+        self._metric_lock = threading.Lock()
         self.is_running = threading.Event()
-        self.worker_thread = threading.Thread(
-            target=self._worker_loop, 
-            daemon=True,
-            name=name
-        )
-        self.load_process = None # To store subprocesses like stress-ng
-
-    def get_latest_metric(self) -> float:
-        """Safely reads the latest metric value for the master controller."""
-        with self.metric_lock:
-            return self.latest_metric
+        self.worker_thread: Optional[threading.Thread] = None
+        self.load_process: Optional[subprocess.Popen[Any]] = None
 
     def set_metric(self, value: float):
-        """Safely updates the latest metric value from the worker thread."""
-        with self.metric_lock:
-            self.latest_metric = value
+        """Thread-safe update of the latest metric value."""
+        with self._metric_lock:
+            self._metric = value
+
+    def get_latest_metric(self) -> float:
+        """Thread-safe retrieval of the latest metric value."""
+        with self._metric_lock:
+            return self._metric
+
+    def _worker(self):
+        """Worker function specific to each experiment (to be overridden)."""
+        raise NotImplementedError("Subclasses must implement the _worker method.")
 
     def start(self):
-        """Starts the background worker thread."""
-        if not self.worker_thread.is_alive():
-            self.is_running.clear()
-            self.worker_thread.start()
-            print(f"[{self.worker_thread.name}] Started background loop.")
+        """Starts the experiment worker thread."""
+        if self.worker_thread and self.worker_thread.is_alive():
+            print(f"[{self.__class__.__name__}] Already running.")
+            return
+
+        self.is_running.clear() # Set the running flag
+        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
+        self.worker_thread.start()
+        print(f"[{self.__class__.__name__}] Started background loop.")
 
     def stop(self):
-        """Signals the thread and any active subprocesses to stop and joins the thread."""
-        print(f"[{self.worker_thread.name}] Stopping...")
-        self.is_running.set() # Signal worker loop to exit
-
-        # Kill any active subprocesses (e.g., stress-ng)
+        """
+        Stops the worker thread and terminates the background load process, 
+        ensuring file handles are closed to prevent resource warnings.
+        """
+        if self.is_running.is_set():
+            # Already stopped or in the process of stopping
+            return
+            
+        print(f"[{self.__class__.__name__}] Stopping...")
+        
+        # 1. Signal the worker thread to stop
+        self.is_running.set() 
+        
+        # 2. Terminate the subprocess (if it exists and is running)
         if self.load_process and self.load_process.poll() is None:
+            print(f"[{self.__class__.__name__}] Active load process attempting terminate...")
             self.load_process.terminate()
             try:
-                self.load_process.wait(timeout=2)
+                # Give it a short time to terminate gracefully
+                self.load_process.wait(timeout=2) 
             except subprocess.TimeoutExpired:
+                print(f"[{self.__class__.__name__}] Termination timed out. Force killing.")
                 self.load_process.kill()
-            print(f"[{self.worker_thread.name}] Active load process killed.")
+
+        # 3. Explicitly close subprocess file handles to prevent ResourceWarning
+        if self.load_process:
+            if self.load_process.stdout:
+                self.load_process.stdout.close()
+            if self.load_process.stderr:
+                self.load_process.stderr.close()
+            
+            # 4. Clean up the process object reference
             self.load_process = None
-        
-        # Wait for the worker thread to finish its operation
-        self.worker_thread.join(timeout=IPERF_INTERVAL + 2) 
 
-        # Reset metric on exit
-        self.set_metric(0.0)
-        print(f"[{self.worker_thread.name}] Shut down complete.")
-
-    def _worker_loop(self):
-        """Abstract method: This must be implemented by subclasses."""
-        raise NotImplementedError("Subclasses must implement _worker_loop()")
-
-    def __del__(self):
-        self.stop() # Ensure cleanup on object deletion
+        print(f"[{self.__class__.__name__}] Shut down complete.")
 
 
+# --- IPERF EXPERIMENT ---
 class IperfExperiment(ExperimentManager):
-    """Manages continuous iperf3 bandwidth measurement (Telemetry)."""
-    
-    def __init__(self, server_ip=IPERF_SERVER_IP, port=IPERF_PORT, duration=IPERF_TEST_DURATION, interval=IPERF_INTERVAL):
-        super().__init__(name="IperfExperiment")
+    """Manages an iperf3 client for real-time bandwidth monitoring."""
+    def __init__(self, server_ip: str = IPERF_SERVER_IP, port: int = IPERF_SERVER_PORT):
+        super().__init__()
         self.server_ip = server_ip
         self.port = port
-        self.duration = duration
-        self.interval = interval
 
-    def _run_iperf_test(self):
-        """Executes a single iperf3 test and parses the result for bandwidth (Mbps)."""
+    def _worker(self):
+        """Starts iperf3 and continuously reads and parses its output stream."""
         command = [
             'iperf3', '-c', self.server_ip, '-p', str(self.port), 
-            '-t', str(self.duration), '-J', # JSON output
-            '--forceflush'
+            '-i', '0.2',  # Interval for metric updates (must be small for streaming)
+            '--forceflush' # Force flushing output for immediate reading
         ]
         
         try:
-            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=self.interval)
-            iperf_json = json.loads(result.stdout)
-            
-            # Extract bandwidth from the 'sum_received' block
-            bits_per_second = iperf_json['end']['sum_received']['bits_per_second']
-            bandwidth_mbps = bits_per_second / 1000000.0
-            
-            return bandwidth_mbps
-            
-        except subprocess.CalledProcessError as e:
-            # Server unreachable or test failure
-            return 0.0 
-        except Exception:
-            # JSON parsing error or timeout
-            return 0.0
-
-    def _worker_loop(self):
-        """Iperf worker loop: runs tests and updates the metric."""
-        while not self.is_running.is_set():
-            new_bandwidth = self._run_iperf_test()
-            self.set_metric(new_bandwidth)
-            print(f"[IperfExperiment] Measured: {new_bandwidth:.2f} Mbps")
-            self.is_running.wait(timeout=self.interval)
-
-
-class StressExperiment(ExperimentManager):
-    """Manages running stress-ng (Load Generation) and reporting CPU utilization (Telemetry)."""
-    
-    def __init__(self, cpu_count=psutil.cpu_count(logical=False), interval=STRESS_INTERVAL):
-        super().__init__(name="StressExperiment")
-        self.cpu_count = cpu_count
-        self.interval = interval
-        # Command runs 100% load on all physical cores using matrix multiplication
-        self.stress_command = ['stress-ng', '--cpu', str(self.cpu_count), '-l', '100', '--cpu-method', 'matrixprod'] 
-
-    def _start_stress_process(self):
-        """Starts the stress-ng process in the background."""
-        try:
-            # Use Popen to run non-blocking and manage the process life-cycle
+            print(f"[{self.__class__.__name__}] Starting streaming test: {' '.join(command)}")
+            # Use bufsize=1 for line buffering
             self.load_process = subprocess.Popen(
-                self.stress_command, 
-                stdout=subprocess.DEVNULL, 
-                stderr=subprocess.DEVNULL,
-                start_new_session=True # Important for clean termination
+                command, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                bufsize=1 
             )
-            print(f"[StressExperiment] Stress-ng process started (PID: {self.load_process.pid}).")
         except FileNotFoundError:
-            print("[StressExperiment] ERROR: 'stress-ng' not found. Cannot run stress test.", file=sys.stderr)
-            self.load_process = None
-        except Exception as e:
-            print(f"[StressExperiment] ERROR starting stress-ng: {e}", file=sys.stderr)
-            self.load_process = None
-
-    def _worker_loop(self):
-        """Stress worker loop: continuously monitors CPU usage while stress-ng runs."""
-        
-        self._start_stress_process()
-        
-        if not self.load_process:
-            self.is_running.set() 
+            print(f"[{self.__class__.__name__}] ERROR: 'iperf3' command not found. Cannot run experiment.", file=sys.stderr)
+            self.is_running.set() # Self-terminate on failure
             return
 
-        while not self.is_running.is_set():
-            try:
-                # psutil.cpu_percent() measures instantaneous usage over the last 'interval'
-                cpu_usage_percent = psutil.cpu_percent(interval=self.interval)
-                self.set_metric(cpu_usage_percent)
-                print(f"[StressExperiment] Current CPU Usage: {cpu_usage_percent:.1f}%")
-                
-                # Check if stress-ng process has unexpectedly terminated
+        # Main reading loop
+        while not self.is_running.is_set() and self.load_process.poll() is None:
+            line = self.load_process.stdout.readline()
+
+            if not line:
+                # No more output means the process has likely finished
                 if self.load_process.poll() is not None:
-                     print("[StressExperiment] WARNING: Stress-ng process terminated prematurely.", file=sys.stderr)
-                     self.set_metric(0.0)
-                     self.is_running.set()
-                     break
+                    break
+                # Wait briefly if no output yet but process is still running
+                time.sleep(0.1) 
+                continue
+
+            try:
+                # Example iperf line with interval:
+                # [  5] 0.00-0.20 sec  25.0 MBytes  100.0 Mbits/sec  0  -177 KB
+                # We need the line containing "bits/sec" or "Bytes/sec" that is NOT the summary.
                 
-            except Exception:
-                self.set_metric(0.0)
-                
-            self.is_running.wait(timeout=self.interval)
+                # We look for the line containing "bits/sec" or "Bytes/sec" AND the interval format "X.XX-Y.YY"
+                if 'bits/sec' in line and '-' in line and 'sec' in line:
+                    fields = line.split()
+                    # The bandwidth value is often the 7th field (index 6)
+                    # We look for the last field that is a number before the unit (Mbits/sec)
+                    
+                    # Simplified parsing based on common iperf format for the bandwidth VALUE
+                    # fields[-2] is the unit (Mbits/sec), fields[-3] is the rate.
+                    # This relies on the line being parsed correctly, often it's fields[6] if we split all whitespace
+                    
+                    try:
+                        # Find the first field that looks like the unit (ends in /sec)
+                        unit_index = next(i for i, f in enumerate(fields) if f.endswith('/sec'))
+                        
+                        # The rate is the field just before the unit field
+                        if unit_index > 0:
+                            rate_value = float(fields[unit_index - 1])
+                            self.set_metric(rate_value)
+                            # print(f"[{self.__class__.__name__}] Metric updated: {rate_value}") # Debug
+                            
+                    except (StopIteration, IndexError, ValueError):
+                        # Line didn't match expected structure, ignore it
+                        continue 
+
+            except Exception as e:
+                print(f"[{self.__class__.__name__}] Error processing iperf line: {e} | Line: {line.strip()}", file=sys.stderr)
+                time.sleep(0.1) # Avoid tight loop on error
+
+        # Process exited or thread was stopped.
+        self.set_metric(0.0)
+        self.stop() # Clean up self.load_process reference and close streams
+        
+
+# --- STRESS EXPERIMENT ---
+class StressExperiment(ExperimentManager):
+    """Manages stress-ng load generation and psutil for real-time CPU monitoring."""
+    def __init__(self, cpu_count: int = 1):
+        super().__init__()
+        self.cpu_count = cpu_count
+
+    def _worker(self):
+        """Starts stress-ng and periodically polls CPU usage."""
+        command = ['stress-ng', '--cpu', str(self.cpu_count), '--timeout', '0']
+        
+        try:
+            print(f"[{self.__class__.__name__}] Stress-ng process starting...")
+            # Stress-ng doesn't need its output read, so we silence stdout/stderr
+            self.load_process = subprocess.Popen(
+                command, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL
+            )
+            print(f"[{self.__class__.__name__}] Stress-ng process started (PID: {self.load_process.pid}).")
+        except FileNotFoundError:
+            print(f"[{self.__class__.__name__}] ERROR: 'stress-ng' command not found. Cannot run experiment.", file=sys.stderr)
+            self.is_running.set()
+            return
+        
+        # CPU Monitoring Loop
+        while not self.is_running.is_set():
+            # Check if the stress process terminated prematurely
+            if self.load_process.poll() is not None:
+                print(f"[{self.__class__.__name__}] WARNING: Stress process terminated with code {self.load_process.returncode}.", file=sys.stderr)
+                break 
+
+            # Poll CPU usage across all cores (per-core is False)
+            # Use interval=0 to get an instantaneous reading, relying on the loop's sleep
+            cpu_usage = psutil.cpu_percent(interval=0) 
+            self.set_metric(cpu_usage)
+
+            # Wait for the next interval
+            time.sleep(self.interval)
+
+        # Cleanup on exit
+        self.set_metric(0.0)
+        self.stop()

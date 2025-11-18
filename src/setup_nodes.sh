@@ -40,7 +40,8 @@ BETA_PACKAGES=(
     "python3-gevent"
     "python3-gevent-websocket"
     "iperf3"
-    "stress"
+    "stress-ng"
+    "python3-psutil"
 )
 
 # --- SYSTEMD SERVICES ---
