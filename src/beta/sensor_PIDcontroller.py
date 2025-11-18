@@ -64,7 +64,7 @@ fan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # --- PID INSTANCE ---
 pid = PID(
-    Kp=100, Ki=0.8, Kd=2.0,
+    Kp=120, Ki=0.8, Kd=1.5,
     setpoint=current_state["pid_setpoint"],
     sample_time=current_state["sample_time"],
     output_limits=(0, 255),
