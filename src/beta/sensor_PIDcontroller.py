@@ -71,7 +71,7 @@ pid = PID(
     controller_direction='REVERSE'
 )
 # --- MINIMUM FAN DUTY (prevents free-fall on downward motion) ---
-MIN_DUTY = 60   # Tune between 50–80 depending on your system
+MIN_DUTY = 80   # Tune between 50–80 depending on your system
 
 # ---- CONFIGURATION LOADING ----
 
