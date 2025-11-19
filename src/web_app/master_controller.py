@@ -375,20 +375,22 @@ def handle_control_command(data):
             emit('command_ack', {'success': False, 'message': f'Failed to signal PID {action}.'})
 
     # --- REFACTORED: Load Management ---
-    elif action in ['start_load', 'stop_load']:
-        
+    if action in ['start_load', 'stop_load', 'stop']:
+        # In case Stop PID is clicked, stop here as well
+        load_action = 'start_load' if action == 'start_load' else 'stop_load'
+
         # 1. Manage the in-process experiment thread
-        run_experiment_handler_internal(action, load_type)
+        run_experiment_handler_internal(load_action, load_type)
 
         # 2. Update the config file (for external monitoring/scripts that rely on it)
-        typeToLog = load_type if action == 'start_load' else 'none'
+        typeToLog = load_type if load_action == 'start_load' else 'none'
         load_success = update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', typeToLog)
         # Update the experiment_name in system_status immediately
         with status_lock:
             system_status["experiment_name"] = typeToLog
 
         # 3. Send acknowledgement
-        if load_success and action == 'stop_load':
+        if load_success and load_action != 'start_load':
             emit('command_ack', {'success': True, 'message': f'Experiment terminated. Load Magnitude reset.'})
         elif load_success:
             emit('command_ack', {'success': True, 'message': f'Experiment started: {load_type.upper()}.'})
@@ -397,12 +399,15 @@ def handle_control_command(data):
 
 
     # --- TC Management ---
-    elif action in ['apply_tc', 'remove_tc']:
+    if action in ['apply_tc', 'remove_tc', 'stop']:
+        # In case Stop PID is clicked, stop here as well
+        tc_action = 'apply_tc' if action == 'apply_tc' else 'remove_tc'
+
         # Map the web action to the systemctl command
-        systemctl_command = 'start' if action == 'apply_tc' else 'stop'
+        systemctl_command = 'start' if tc_action == 'apply_tc' else 'stop'
         service_name = 'tc_controller.service'
         command = ['systemctl', systemctl_command, service_name]
-        action_status = 'APPLIED' if action == 'apply_tc' else 'REMOVED'
+        action_status = 'APPLIED' if tc_action == 'apply_tc' else 'REMOVED'
 
         try:
             # check=True raises an exception for non-zero exit codes (failure)
