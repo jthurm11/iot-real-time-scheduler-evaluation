@@ -66,10 +66,12 @@
         <!-- 1. Current Status Metrics (Fixed order, always at top) -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <!-- PID Status -->
+             <!-- Depricating
             <div id="status-card" class="bg-gray-800 p-3 rounded-lg shadow-xl text-center flex flex-col justify-center">
                 <p class="text-sm font-medium text-gray-400">PID Loop Status</p>
                 <p id="pid-status-text" class="text-lg font-bold text-red-500 mt-1">STOPPED</p>
             </div>
+            -->
             <!-- Current Height (Color changed to sky-400 to match chart line) -->
              <!-- FIX: Changed from height to distance from sensor -->
             <div class="bg-gray-800 p-3 rounded-lg shadow-xl text-center">
@@ -107,17 +109,12 @@
             <div id="system-controls-card" class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700 h-full flex flex-col space-y-4">
                 <h3 class="text-xl font-bold text-teal-400 border-b border-teal-700 pb-2">PID & Congestion Controls</h3>
 
-                <!-- PID Start/Stop -->
-                <div class="flex flex-wrap gap-2">
-                    <button id="start-btn" class="flex-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold transition duration-150 text-sm" onclick="sendControl('start')">Start PID</button>
-                    <button id="stop-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('stop')" disabled>Stop PID</button>
-                </div>
                 
                 <!-- Setpoint Slider -->
                 <div class="border-t border-gray-700 pt-3">
                     <div class="flex justify-between items-center mb-2">
-                        <label for="setpoint-slider" class="text-md font-semibold text-teal-300">Setpoint (cm)</label>
-                        <span id="setpoint-value" class="text-lg font-bold text-teal-300">20.0 cm</span>
+                        <label for="setpoint-slider" class="text-md font-semibold text-emerald-300">Setpoint (cm)</label>
+                        <span id="setpoint-value" class="text-lg font-bold text-emerald-300">20.0 cm</span>
                     </div>
                     <input type="range" id="setpoint-slider" min="5.0" max="50.0" step="0.5" value="20.0" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
                 </div>
@@ -177,15 +174,27 @@
 
             </div>
             
-            <!-- 2b. Experiment Actions (Load & TC) - RIGHT/BOTTOM -->
+            <!-- 2b. Experiment Actions - RIGHT/BOTTOM -->
             <div id="experiment-manager-card" class="bg-gray-800 p-4 rounded-xl shadow-2xl border border-gray-700 h-full flex flex-col space-y-4">
                 <h3 class="text-xl font-bold text-pink-400 border-b border-pink-700 pb-2">Experiment Actions</h3>
                 
-                <!-- Load Control (Renamed) -->
                 <div class="space-y-2">
-                    <!--
-                    <p class="text-sm text-gray-400">Background Load Type: <span id="current-load-type-display" class="font-semibold text-white">NONE</span></p>
-                    -->
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-md font-semibold text-orange-300">PID Control</p>
+                        <div id="pid-status-pill" class="flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300">
+                            <div id="pid-dot" class="w-2 h-2 rounded-full"></div>
+                            <span id="pid-status-text"></span>
+                        </div>
+                    </div>
+                    <!-- PID Start/Stop -->
+                    <div class="flex flex-wrap gap-2">
+                        <button id="start-btn" class="flex-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold transition duration-150 text-sm" onclick="sendControl('start')">Start PID</button>
+                        <button id="stop-btn" class="flex-1 px-3 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold transition duration-150 text-sm disabled:opacity-50" onclick="sendControl('stop')" disabled>Stop PID</button>
+                    </div>
+                </div>
+
+                <!-- Load Control -->
+                <div class="border-t border-gray-700 pt-3 space-y-2">
                     <div class="flex justify-between items-center mb-1">
                         <p class="text-md font-semibold text-indigo-300">Backgroud Load Type</p>
                         <!-- Load Type Status Pill & Title -->
@@ -273,17 +282,19 @@
         });
 
         // --- DOM Elements ---
-        const pidStatusText = document.getElementById('pid-status-text');
         const currentDistanceValue = document.getElementById('current-distance-value');
         const fanOutputValue = document.getElementById('fan-output-value');
         const fanRPMValue = document.getElementById('fan-rpm-value');
         const lastUpdateTime = document.getElementById('last-update-time');
 
         // PID Controls
+        let pidStatus = 'STOPPED'; // 'RUNNING', 'STOPPED'
         const oscCurrentSp = document.getElementById('osc-current-sp');
         const oscNextSp = document.getElementById('osc-next-sp');
         const oscSwitch = document.getElementById('osc-switch');
-
+        const pidStatusPill = document.getElementById('pid-status-pill');
+        const pidDot = document.getElementById('pid-dot');
+        const pidStatusText = document.getElementById('pid-status-text');
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
 
@@ -350,7 +361,9 @@
             // --- Status Text Updates ---
             pidStatusText.textContent = pidStatus;
             pidStatusText.classList.remove('text-red-500', 'text-green-500');
-            pidStatusText.classList.add(isRunning ? 'text-green-500' : 'text-red-500');
+            pidStatusText.classList.add(isRunning ? 'text-white' : 'text-red-500');
+            pidStatusPill.className = `flex items-center space-x-1 py-1 px-2 rounded-full font-bold text-xs transition-colors duration-300 ${isRunning ? 'bg-teal-500 text-white' : 'bg-gray-700 text-gray-300'}`;
+            pidDot.className = `w-2 h-2 rounded-full ${isRunning ? 'bg-white' : 'bg-gray-400'}`;
 
             loadStatusText.textContent = isLoadRunning ? 'RUNNING' : 'STOPPED';
             loadStatusText.classList.remove('text-red-500', 'text-green-500');
