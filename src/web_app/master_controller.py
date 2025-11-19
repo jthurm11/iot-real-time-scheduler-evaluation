@@ -18,32 +18,32 @@ import threading
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
-# --- NEW: Import Experiment Manager Components ---
+# --- Import Experiment Manager Components ---
 from experiment_manager import IperfExperiment, StressExperiment, ExperimentManager 
 # -------------------------------------------------
 
 # --- CONFIGURATION PATHS ---
 # The primary network config
 NETWORK_CONFIG_FILE = '/opt/project/common/network_config.json'
-# Config for PID Setpoint (read by sensor_PIDcontroller.py)
+# Config for PID Setpoint
 SETPOINT_CONFIG_FILE = '/opt/project/common/setpoint_config.json'
-# Config for Network Congestion (read by network_injector.py/sensor_PIDcontroller.py)
+# Config for Network Congestion & Experiment Type
 CONGESTION_CONFIG_FILE = '/opt/project/common/congestion_config.json'
-# Path for the experiment status file (will be written by experiment_manager.sh)
-# NOTE: Deprecating in favor of updating congestion file instead
-EXPERIMENT_STATUS_FILE = '/tmp/current_experiment.txt'
 
 # --- NETWORK CONFIGURATION (Defaults) ---
 # We've migrated to common json configuration files that get loaded by load_network_config. 
 # These are all safe default values to use until load_network_config replaces them. 
-#TELEMETRY_PORT = 5006 # This will be the SENSOR_DATA_LISTEN_PORT
-#FAN_TELEMETRY_PORT = 5007 # This will be the FAN_DATA_LISTEN_PORT
+fan_command_ip = "127.0.0.1"
+fan_command_port = 5005
+sensor_ip = "127.0.0.1"
+sensor_command_port = 5004
+sensor_telemetry_port = 5006
+fan_telemetry_port = 5007
+web_app_port = 8000
+web_app_ip = "0.0.0.0" # Listen on all interfaces
 
-# Global status for experiment tracking
-CURRENT_EXPERIMENT = "none" # Tracks current load type
-PID_STATUS = "STOPPED" # Tracks PID loop status (derived from experiment status)
 
-# --- NEW: Global State for In-Process Experiment Control ---
+# --- Global State for In-Process Experiment Control ---
 # Tracks the currently running ExperimentManager instance
 active_experiment: ExperimentManager | None = None 
 experiment_lock = threading.Lock() # Protects access to the active_experiment object
@@ -60,16 +60,15 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key_here' # Needed for session management
 socketio = SocketIO(app, async_mode='gevent', cors_allowed_origins="*") 
 
-# FIX: Changed 'height' to 'distance' throughout the code
 # --- SYSTEM STATE ---
 system_status = {
     "current_distance": 0.0,
     "current_rpm": 0,
     "fan_output_duty": 0.0,
-    "pid_status": PID_STATUS,
+    "pid_status": 'STOPPED',
     "pid_setpoint": 20.0,
-    "experiment_name": CURRENT_EXPERIMENT,
-    "traffc_status": 'remove_tc',
+    "experiment_name": 'none',
+    "tc_status": 'REMOVED',
     "delay": 0,
     "loss_rate": 0.0,
     "load_magnitude": 0.0,
@@ -78,15 +77,6 @@ system_status = {
 status_lock = threading.Lock()
 stop_event = threading.Event()
 
-# --- NETWORK CONFIGURATION VARIABLES (Loaded by load_network_config) ---
-fan_command_ip = "127.0.0.1"
-fan_command_port = 5005
-sensor_ip = "127.0.0.1"
-sensor_command_port = 5004
-sensor_telemetry_port = 5006
-fan_telemetry_port = 5007
-web_app_port = 8000
-web_app_ip = "0.0.0.0" # Listen on all interfaces
 
 # --- CONFIGURATION LOADING ---
 def load_network_config():
@@ -141,7 +131,7 @@ def initialize_config_files():
     # Ensure traffic rules are cleared on start
     command = ['systemctl', 'stop', 'tc_controller.service']
     subprocess.run(command, check=False, text=True, capture_output=True, timeout=5)
-    update_status_file(CONGESTION_CONFIG_FILE, 'TC_ACTION', 'remove_tc')
+    update_status_file(CONGESTION_CONFIG_FILE, 'TC_STATUS', 'REMOVED')
     
     # Ensure load is cleared on start
     command = ['systemctl', 'stop', 'experiment_controller.service']
@@ -335,15 +325,16 @@ def handle_control_command(data):
         run_experiment_handler_internal(action, load_type)
 
         # 2. Update the config file (for external monitoring/scripts that rely on it)
-        load_success = update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', load_type)
-        
+        typeToLog = load_type if action == 'start_load' else 'none'
+        load_success = update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', typeToLog)
+        # Update the experiment_name in system_status immediately
+        with status_lock:
+            system_status["experiment_name"] = typeToLog
+
         # 3. Send acknowledgement
         if load_success and action == 'stop_load':
             emit('command_ack', {'success': True, 'message': f'Experiment terminated. Load Magnitude reset.'})
         elif load_success:
-            # Update the experiment_name in system_status immediately
-            with status_lock:
-                 system_status["experiment_name"] = load_type
             emit('command_ack', {'success': True, 'message': f'Experiment started: {load_type.upper()}.'})
         else:
              emit('command_ack', {'success': False, 'message': f'Failed to signal experiment action.'})
@@ -355,20 +346,22 @@ def handle_control_command(data):
         systemctl_command = 'start' if action == 'apply_tc' else 'stop'
         service_name = 'tc_controller.service'
         command = ['systemctl', systemctl_command, service_name]
-
-        # Write the applied ruleset to the config file.
-        tc_action_success = update_status_file(CONGESTION_CONFIG_FILE, 'TC_ACTION', action)
-
-        if not tc_action_success:
-            emit('command_ack', {'success': False, 'message': 'Failed to write TC config.'})
-            return
+        action_status = 'APPLIED' if action == 'apply_tc' else 'REMOVED'
 
         try:
             # check=True raises an exception for non-zero exit codes (failure)
             # text=True handles input/output as strings
             # capture_output=True captures stdout/stderr
             # Add a timeout in case systemctl hangs
-            result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+            subprocess.run(command, check=True, text=True, capture_output=True, timeout=5)
+            
+            # Write the applied ruleset to the config file.
+            tc_status_success = update_status_file(CONGESTION_CONFIG_FILE, 'TC_STATUS', action_status)
+            if not tc_status_success:
+                emit('command_ack', {'success': False, 'message': 'Failed to write TC config.'})
+                return
+            with status_lock:
+                system_status["tc_status"] = action_status
             emit('command_ack', {'success': True, 'message': f'Successfully executed: {systemctl_command.upper()} {service_name}.'})
         except subprocess.CalledProcessError as e:
             # Handle command failure (e.g., systemctl failed to start the service)
@@ -425,7 +418,7 @@ def status_poller():
                     system_status["delay"] = congestion_data.get('CONGESTION_DELAY', 0)
                     system_status["loss_rate"] = congestion_data.get('PACKET_LOSS_RATE', 0.0)
                     system_status["experiment_name"] = congestion_data.get('LOAD_TYPE', 'none')
-                    system_status["traffc_status"] = congestion_data.get('TC_ACTION', 'remove_tc')
+                    system_status["tc_status"] = congestion_data.get('TC_STATUS', 'REMOVED')
             except:
                 pass # Use existing settings if file read fails
             

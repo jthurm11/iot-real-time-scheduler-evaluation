@@ -1,5 +1,5 @@
 {
     "CONGESTION_DELAY": 0.0,
     "PACKET_LOSS_RATE": 0.0,
-    "tc_action": "remove_tc"
+    "TC_STATUS": "remove_tc"
 }
