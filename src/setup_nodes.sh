@@ -266,6 +266,9 @@ install_project() {
     # Create target directory and copy all files
     sudo mkdir -p "$INSTALL_DIR"
     sudo cp -r "$SCRIPT_DIR"/{common,$TARGET_NODE} "$INSTALL_DIR"/
+    if [ "$TARGET_NODE" == "beta" ]; then
+        sudo cp -r "$SCRIPT_DIR"/web_app "$INSTALL_DIR"/
+    fi
 
     # Set proper ownership and permissions
     CURR_USER="$(id -un)"
