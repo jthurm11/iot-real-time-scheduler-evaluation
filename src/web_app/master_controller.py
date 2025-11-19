@@ -67,6 +67,15 @@ system_status = {
     "fan_output_duty": 0.0,
     "pid_status": 'STOPPED',
     "pid_setpoint": 20.0,
+
+    # oscillation visual support
+    "oscillation_a": 20.0,
+    "oscillation_b": 30.0,
+    "pid_next_setpoint": 30.0,
+    "pid_switch_in": 0.0,
+    "oscillation_enabled": False,
+    "oscillation_period": 20.0,
+
     "experiment_name": 'none',
     "tc_status": 'REMOVED',
     "delay": 0,
@@ -166,6 +175,13 @@ def sensor_data_listener(listen_ip, port):
                         system_status["current_distance"] = packet.get("current_distance", system_status["current_distance"])
                         system_status["fan_output_duty"] = scaled_duty
                         system_status["pid_status"] = packet.get("pid_status", system_status["pid_status"])
+
+                        # FIELDS FOR OSCILLATION
+                        system_status["oscillation_a"] = packet.get("oscillation_a", system_status["oscillation_a"])
+                        system_status["oscillation_b"] = packet.get("oscillation_b", system_status["oscillation_b"])
+                        system_status["pid_next_setpoint"] = packet.get("pid_next_setpoint", system_status["pid_next_setpoint"])
+                        system_status["pid_switch_in"] = packet.get("pid_switch_in", system_status["pid_switch_in"])
+
                         system_status["master_timestamp"] = time.time()
                 except json.JSONDecodeError:
                     logger.warning("Received invalid JSON from sensor node.")
@@ -267,6 +283,46 @@ def run_experiment_handler_internal(action: str, new_load_type: str):
 def index():
     """Renders the main dashboard."""
     return render_template('index.html')
+    
+@socketio.on('set_oscillation')
+def handle_oscillation_update(data):
+    """Handles oscillation A/B/PERIOD updates from the dashboard."""
+
+    osc_enabled = data.get('enabled')
+    osc_a = data.get('a')
+    osc_b = data.get('b')
+    osc_period = data.get('period')
+
+    ok = True
+
+    # Only update values that were provided
+    if osc_enabled is not None:
+        ok &= update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_ENABLED', osc_enabled)
+
+    if osc_a is not None:
+        ok &= update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_A', osc_a)
+
+    if osc_b is not None:
+        ok &= update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_B', osc_b)
+
+    if osc_period is not None:
+        ok &= update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_PERIOD_SEC', osc_period)
+
+    # Update server-side cache
+    with status_lock:
+        if osc_enabled is not None:
+            system_status["oscillation_enabled"] = osc_enabled
+        if osc_a is not None:
+            system_status["oscillation_a"] = osc_a
+        if osc_b is not None:
+            system_status["oscillation_b"] = osc_b
+        if osc_period is not None:
+            system_status["oscillation_period"] = osc_period
+
+    if ok:
+        emit('command_ack', {'success': True, 'message': 'Oscillation settings updated.'})
+    else:
+        emit('command_ack', {'success': False, 'message': 'Failed to update oscillation settings.'})
 
 @socketio.on('set_setpoint')
 def handle_setpoint_update(data):
@@ -408,6 +464,20 @@ def status_poller():
                     setpoint_data = json.load(f)
                     system_status["pid_setpoint"] = setpoint_data.get('PID_SETPOINT', 20.0)
                     system_status["pid_status"] = setpoint_data.get('PID_STATUS', 'STOPPED')
+
+                    # NEW: oscillation settings (keep them in sync with config + sensor)
+                    system_status["oscillation_enabled"] = setpoint_data.get(
+                        'OSCILLATION_ENABLED', system_status.get("oscillation_enabled", False)
+                    )
+                    system_status["oscillation_a"] = setpoint_data.get(
+                        'OSCILLATION_A', system_status["oscillation_a"]
+                    )
+                    system_status["oscillation_b"] = setpoint_data.get(
+                        'OSCILLATION_B', system_status["oscillation_b"]
+                    )
+                    system_status["oscillation_period"] = setpoint_data.get(
+                        'OSCILLATION_PERIOD_SEC', system_status.get("oscillation_period", 20.0)
+                    )
             except:
                 pass # Use existing status if file read fails
 
