@@ -198,39 +198,44 @@ def update_runtime_configs(pid_controller: PID):
 # ---- ULTRASONIC SENSOR FUNCTION ----
 
 def get_distance_cm():
-    """Reads distance from the ultrasonic sensor."""
-    GPIO.output(TRIG_PIN, GPIO.LOW)
-    time.sleep(0.000002)
+    """Reads distance from the ultrasonic sensor. Now includes global try/except."""
+    try:
+        GPIO.output(TRIG_PIN, GPIO.LOW)
+        time.sleep(0.000002)
 
-    # Send pulse
-    GPIO.output(TRIG_PIN, GPIO.HIGH)
-    time.sleep(0.00001)
-    GPIO.output(TRIG_PIN, GPIO.LOW)
+        # Send pulse
+        GPIO.output(TRIG_PIN, GPIO.HIGH)
+        time.sleep(0.00001)
+        GPIO.output(TRIG_PIN, GPIO.LOW)
 
-    pulse_start = time.time()
-    # Use stop_event check to prevent blocking when system is shutting down
-    while GPIO.input(ECHO_PIN) == 0 and not stop_event.is_set():
-        if time.time() - pulse_start > 0.1:
-            return 0.0
         pulse_start = time.time()
+        # Use stop_event check to prevent blocking when system is shutting down
+        while GPIO.input(ECHO_PIN) == 0 and not stop_event.is_set():
+            if time.time() - pulse_start > 0.1:
+                return 0.0 # Software timeout
+            pulse_start = time.time()
 
-    pulse_end = time.time()
-    while GPIO.input(ECHO_PIN) == 1 and not stop_event.is_set():
-        if time.time() - pulse_end > 0.1:
-            return 0.0
         pulse_end = time.time()
+        while GPIO.input(ECHO_PIN) == 1 and not stop_event.is_set():
+            if time.time() - pulse_end > 0.1:
+                return 0.0 # Software timeout
+            pulse_end = time.time()
 
-    pulse_len = pulse_end - pulse_start
-    distance = pulse_len * 17150.0  # (cm)
-    return distance if distance > 0.0 else 0.0
-
+        pulse_len = pulse_end - pulse_start
+        distance = pulse_len * 17150.0  # (cm)
+        return distance if distance > 0.0 else 0.0
+    
+    except Exception as e:
+        # Catch unexpected I/O errors from GPIO during the pulse measurement
+        logger.error(f"Hardware/GPIO Error during distance read: {e}. Returning 0.0.")
+        return 0.0
 
 # ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
 
 def pid_control_thread_func(pid_controller: PID):
     """
     Core thread: Reads sensor, handles oscillation, computes PID output,
-    sends fan command, applies congestion.
+    sends fan command, applies congestion. Now includes robustness for sensor reads.
     """
     global current_state
 
@@ -245,9 +250,30 @@ def pid_control_thread_func(pid_controller: PID):
         with state_lock:
             status = current_state["pid_status"]
 
+        # Default duty to the last successful duty cycle
+        duty = current_state["current_duty"]
+        distance = current_state["current_distance"] # Default to last known distance
+
         if status == "STOPPED":
             # PID is disabled. Set duty to 0 and reset PID state to prevent windup.
-            distance = get_distance_cm()
+            try:
+                new_distance = get_distance_cm()
+                if new_distance <= 0.0:
+                    logger.warning("Invalid sensor reading (0.0 cm). Retaining last duty cycle.")
+                    distance = 0.0
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                    pass # Continue to congestion/send logic using the last known duty
+                
+                else:
+                    distance = new_distance
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                        
+            except Exception as e:
+                # Catch any unexpected, fatal thread-killing exception from the sensor read
+                logger.error(f"FATAL I/O EXCEPTION: {e}. Retaining last known duty ({duty}).")
+
             duty = 0
             pid_controller.initialize() # Reset I-term and last_output
             logger.debug("PID STOPPED. Setting duty to 0.")
@@ -275,19 +301,59 @@ def pid_control_thread_func(pid_controller: PID):
                     current_state["pid_next_setpoint"] = next_target
                     current_state["pid_switch_in"] = switch_in
 
-            # 3. Read distance
-            distance = get_distance_cm()
+            # --- CRITICAL ROBUSTNESS BLOCK ---
+            try:
+                # 3. Read distance
+                new_distance = get_distance_cm()
 
-            # 4. PID compute
-            output = pid_controller.compute(distance)
+                # If the sensor returns 0.0, it indicates an internal timeout/error/bad read.
+                if new_distance <= 0.0:
+                    logger.warning("Invalid sensor reading (0.0 cm). Retaining last duty cycle.")
+                    # Update distance state to 0.0 for telemetry visualization
+                    distance = 0.0
+                    
+                    # Log the bad reading, but SKIP PID update and fan command for this cycle
+                    # to prevent a massive spike in output (as 0.0 cm is far from setpoint).
+                    
+                    # Update shared state with the bad distance
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                        
+                    # Skip the rest of the control logic and proceed to timing/logging
+                    # We continue to the next iteration, sending the last valid 'duty'
+                    # if the loop had continued without this continue statement.
+                    # Since we updated distance, we use 'break' to jump to the logging/sending section.
+                    pass # Continue to congestion/send logic using the last known duty
+                
+                else:
+                    # Good read: proceed with control
+                    distance = new_distance
+                    
+                    # 4. PID compute
+                    output = pid_controller.compute(distance)
 
-            # Apply minimum fan duty to prevent free-fall
-            if output < MIN_DUTY:
-                duty = MIN_DUTY
-            else:
-                duty = int(min(255, output))
+                    # 5. Apply minimum fan duty
+                    if output < MIN_DUTY:
+                        duty = MIN_DUTY
+                    else:
+                        duty = int(min(255, output))
 
-        # 5. Congestion simulation
+                    # Update shared state with successful read
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                        
+            except Exception as e:
+                # Catch any unexpected, fatal thread-killing exception from the sensor read
+                logger.error(f"FATAL I/O EXCEPTION: {e}. Retaining last known duty ({duty}).")
+                # Do not update distance or duty in shared state, just let the loop continue.
+                # The old values are used for logging/sending below.
+            # --- END CRITICAL ROBUSTNESS BLOCK ---
+
+        # 6. Update shared duty state (whether calculated, retained, or stopped)
+        with state_lock:
+            current_state["current_duty"] = duty
+            
+        # 7. Congestion simulation
         with state_lock:
             delay_s = current_state["delay"] / 1000.0
             loss_rate = current_state["loss_rate"]
@@ -299,15 +365,10 @@ def pid_control_thread_func(pid_controller: PID):
         if loss_rate > 0.0 and random.random() * 100.0 < loss_rate:
             packet_sent = False
 
-        # 6. Update shared state
-        with state_lock:
-            current_state["current_distance"] = distance
-            current_state["current_duty"] = duty
-
-            
-        # 7. Send fan command if not dropped
+        # 8. Send fan command if not dropped
         if packet_sent:
             try:
+                # Ensure we use the (potentially retained) 'duty' value
                 fan_sock.sendto(str(duty).encode('utf-8'),
                                 (current_state["fan_ip"], current_state["fan_port"]))
                 logger.debug(f"FAN duty SENT: {duty:3d} | H: {distance:6.2f}cm")
@@ -319,9 +380,9 @@ def pid_control_thread_func(pid_controller: PID):
         # --- LOG THIS LOOP ---
         log_data = {
             "timestamp": time.time(),
-            "distance": distance,
+            "distance": current_state["current_distance"], # Use shared state for most accurate telemetry
             "setpoint": current_state["pid_setpoint"],
-            "duty": duty,
+            "duty": current_state["current_duty"],         # Use shared state
             "delay_ms": current_state["delay"],
             "loss_rate": current_state["loss_rate"],
             "osc_a": current_state["oscillation_a"],
@@ -333,7 +394,7 @@ def pid_control_thread_func(pid_controller: PID):
         }
         write_log_row(log_data)
 
-        # 8. Maintain loop timing (respect sample_time)
+        # 9. Maintain loop timing (respect sample_time)
         elapsed = time.time() - loop_start
         sleep_time = pid_controller.sample_time - elapsed
         if sleep_time > 0:

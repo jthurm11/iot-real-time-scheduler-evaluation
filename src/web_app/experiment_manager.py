@@ -4,6 +4,7 @@ import time
 import os
 import psutil
 import signal
+import sys # Added for error printing in Iperf
 from typing import Optional, Union, Any
 
 # --- CONFIGURATION ---
@@ -39,6 +40,15 @@ class ExperimentManager:
     def _worker(self):
         """Worker function specific to each experiment (to be overridden)."""
         raise NotImplementedError("Subclasses must implement the _worker method.")
+        
+    def _on_experiment_finish(self):
+        """
+        NEW: Called when the experiment naturally completes (e.g., after a timeout).
+        Subclasses MUST implement this to update the main application's state (e.g.,
+        set load_type='none' and running_experiment='stopped').
+        """
+        raise NotImplementedError("Subclasses must implement _on_experiment_finish to update global state.")
+
 
     def start(self):
         """Starts the experiment worker thread."""
@@ -46,7 +56,7 @@ class ExperimentManager:
             print(f"[{self.__class__.__name__}] Already running.")
             return
 
-        self.is_running.clear() # Set the running flag
+        self.is_running.clear() # Clear the running flag (experiment is active)
         self.worker_thread = threading.Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
         print(f"[{self.__class__.__name__}] Started background loop.")
@@ -96,17 +106,43 @@ class IperfExperiment(ExperimentManager):
         super().__init__()
         self.server_ip = server_ip
         self.port = port
+        # Placeholder for the external state update function
+        self.external_finish_callback = None 
+
+    def set_finish_callback(self, func):
+        """Allows setting a function (e.g., from the main Flask app) to update global state."""
+        self.external_finish_callback = func
+
+    def _on_experiment_finish(self):
+        """
+        Fulfills the abstract method: signals the main application that the test is done.
+        """
+        print(f"[{self.__class__.__name__}] UDP Test completed after 60s. Signalling global state update...")
+        if self.external_finish_callback:
+            # This function should call the logic to update global state: 
+            # set load_type='none' and running_experiment='stopped'
+            self.external_finish_callback()
+        else:
+            print(f"[{self.__class__.__name__}] WARNING: No external finish callback set. Global state must be manually updated.")
+
 
     def _worker(self):
-        """Starts iperf3 and continuously reads and parses its output stream."""
+        """Starts iperf3 UDP test for 60s and continuously reads and parses its output stream."""
+        # --- COMMAND UPDATE FOR UDP, UNRESTRICTED BANDWIDTH, AND DURATION ---
         command = [
-            'iperf3', '-c', self.server_ip, '-p', str(self.port), 
-            '-i', '0.2',  # Interval for metric updates (must be small for streaming)
-            '--forceflush' # Force flushing output for immediate reading
+            'iperf3', 
+            '-c', self.server_ip, 
+            '-p', str(self.port), 
+            '-u',               # Use UDP
+            '-b', '0',          # Unrestricted bandwidth (0)
+            '-t', '60',         # Duration of 60 seconds
+            '-i', '0.2',        # Interval for metric updates
+            '--forceflush'      # Force flushing output for immediate reading
         ]
+        # --- END COMMAND UPDATE ---
         
         try:
-            print(f"[{self.__class__.__name__}] Starting streaming test: {' '.join(command)}")
+            print(f"[{self.__class__.__name__}] Starting 60s UDP test: {' '.join(command)}")
             # Use bufsize=1 for line buffering
             self.load_process = subprocess.Popen(
                 command, 
@@ -118,6 +154,8 @@ class IperfExperiment(ExperimentManager):
         except FileNotFoundError:
             print(f"[{self.__class__.__name__}] ERROR: 'iperf3' command not found. Cannot run experiment.", file=sys.stderr)
             self.is_running.set() # Self-terminate on failure
+            self.set_metric(0.0) # Clear metric
+            self._on_experiment_finish() # Signal failure/stop
             return
 
         # Main reading loop
@@ -125,7 +163,7 @@ class IperfExperiment(ExperimentManager):
             line = self.load_process.stdout.readline()
 
             if not line:
-                # No more output means the process has likely finished
+                # No more output means the process has finished or stdout is done.
                 if self.load_process.poll() is not None:
                     break
                 # Wait briefly if no output yet but process is still running
@@ -133,19 +171,9 @@ class IperfExperiment(ExperimentManager):
                 continue
 
             try:
-                # Example iperf line with interval:
-                # [  5] 0.00-0.20 sec  25.0 MBytes  100.0 Mbits/sec  0  -177 KB
-                # We need the line containing "bits/sec" or "Bytes/sec" that is NOT the summary.
-                
                 # We look for the line containing "bits/sec" or "Bytes/sec" AND the interval format "X.XX-Y.YY"
                 if 'bits/sec' in line and '-' in line and 'sec' in line:
                     fields = line.split()
-                    # The bandwidth value is often the 7th field (index 6)
-                    # We look for the last field that is a number before the unit (Mbits/sec)
-                    
-                    # Simplified parsing based on common iperf format for the bandwidth VALUE
-                    # fields[-2] is the unit (Mbits/sec), fields[-3] is the rate.
-                    # This relies on the line being parsed correctly, often it's fields[6] if we split all whitespace
                     
                     try:
                         # Find the first field that looks like the unit (ends in /sec)
@@ -155,7 +183,6 @@ class IperfExperiment(ExperimentManager):
                         if unit_index > 0:
                             rate_value = float(fields[unit_index - 1])
                             self.set_metric(rate_value)
-                            # print(f"[{self.__class__.__name__}] Metric updated: {rate_value}") # Debug
                             
                     except (StopIteration, IndexError, ValueError):
                         # Line didn't match expected structure, ignore it
@@ -165,7 +192,15 @@ class IperfExperiment(ExperimentManager):
                 print(f"[{self.__class__.__name__}] Error processing iperf line: {e} | Line: {line.strip()}", file=sys.stderr)
                 time.sleep(0.1) # Avoid tight loop on error
 
-        # Process exited or thread was stopped.
+        # --- COMPLETION HANDLING ---
+        print(f"[{self.__class__.__name__}] iperf3 process exited naturally or was stopped.")
+        
+        # If the process exited naturally (not self.is_running.is_set() was triggered)
+        if not self.is_running.is_set():
+            # Process finished after 60s timeout
+            self._on_experiment_finish()
+
+        # Clean up local state
         self.set_metric(0.0)
         self.stop() # Clean up self.load_process reference and close streams
         
@@ -173,13 +208,35 @@ class IperfExperiment(ExperimentManager):
 # --- STRESS EXPERIMENT ---
 class StressExperiment(ExperimentManager):
     """Manages stress-ng load generation and psutil for real-time CPU monitoring."""
+    # NOTE: Stress-ng is a continuous load, so it relies on the external 'stop' command.
+    
     def __init__(self, cpu_count: int = 1):
         super().__init__()
         self.cpu_count = cpu_count
+        # Placeholder for the external state update function
+        self.external_finish_callback = None 
+
+    def set_finish_callback(self, func):
+        """Allows setting a function (e.g., from the main Flask app) to update global state."""
+        self.external_finish_callback = func
+
+    def _on_experiment_finish(self):
+        """
+        Fulfills the abstract method: signals the main application that the test is done.
+        Since stress-ng is manually stopped, this is mostly for clean shutdown.
+        """
+        print(f"[{self.__class__.__name__}] Stress-ng stopped. Signalling global state update...")
+        if self.external_finish_callback:
+            # This function should call the logic to update global state: 
+            # set load_type='none' and running_experiment='stopped'
+            self.external_finish_callback()
+        else:
+            print(f"[{self.__class__.__name__}] WARNING: No external finish callback set. Global state must be manually updated.")
 
     def _worker(self):
         """Starts stress-ng and periodically polls CPU usage."""
-        command = ['stress-ng', '--cpu', str(self.cpu_count), '--timeout', '0']
+        # Using timeout '0' means it runs until manually killed
+        command = ['stress-ng', '--cpu', str(self.cpu_count), '--timeout', '0'] 
         
         try:
             print(f"[{self.__class__.__name__}] Stress-ng process starting...")
@@ -193,6 +250,7 @@ class StressExperiment(ExperimentManager):
         except FileNotFoundError:
             print(f"[{self.__class__.__name__}] ERROR: 'stress-ng' command not found. Cannot run experiment.", file=sys.stderr)
             self.is_running.set()
+            self._on_experiment_finish() # Signal failure/stop
             return
         
         # CPU Monitoring Loop
@@ -210,6 +268,55 @@ class StressExperiment(ExperimentManager):
             # Wait for the next interval
             time.sleep(self.interval)
 
-        # Cleanup on exit
+        # Cleanup on exit (This only runs if self.is_running.is_set() was triggered)
         self.set_metric(0.0)
+        # Note: self.stop() handles process termination and sets self.is_running.set()
+        # We need to call _on_experiment_finish() if it was *not* terminated externally,
+        # but since stress-ng runs forever, we assume it's stopped externally.
+        self._on_experiment_finish()
         self.stop()
+        
+# --- MAIN EXECUTION (Kept for testing purposes, but usually not run standalone) ---
+if __name__ == "__main__":
+    
+    # --- Dummy Callback to show what needs to be implemented in your main app ---
+    def global_state_update():
+        print(">>> GLOBAL STATE UPDATED: Load type set to 'none', Experiment stopped. <<<")
+
+    # --- Test 1: Iperf UDP 60s Test ---
+    print("\n--- Starting Iperf UDP Test (60 seconds) ---")
+    iperf_test = IperfExperiment()
+    iperf_test.set_finish_callback(global_state_update)
+    
+    # Note: Requires an iperf3 server running at 192.168.22.1:5201
+    iperf_test.start() 
+    
+    # Wait for the test to run and finish naturally (approx 60-65 seconds)
+    print("Waiting for Iperf test to complete naturally...")
+    time.sleep(5) # Shorter sleep for demonstration purposes, replace with 65s in reality
+    
+    if iperf_test.worker_thread.is_alive():
+        print("\nTest running, waiting for worker thread to exit...")
+        iperf_test.worker_thread.join(timeout=65) # Wait for the 60s duration + cleanup
+
+    if not iperf_test.is_running.is_set():
+        # This means the worker thread exited on its own and called stop() and the callback
+        print("\nIperf test completed successfully and signaled global state change.")
+    else:
+        print("\nIperf test was manually stopped or timed out.")
+
+
+    # --- Test 2: Stress-ng Test (Manual Stop) ---
+    print("\n--- Starting Stress-ng Test (Manual Stop) ---")
+    stress_test = StressExperiment(cpu_count=2)
+    stress_test.set_finish_callback(global_state_update)
+    stress_test.start()
+    
+    print("Stress test running for 5 seconds...")
+    time.sleep(5)
+    
+    print("Manually stopping Stress test...")
+    stress_test.stop()
+    stress_test.worker_thread.join(timeout=2)
+    
+    print("Experiment Manager Tests Complete.")
