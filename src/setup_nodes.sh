@@ -240,12 +240,12 @@ install_project() {
     log_message ${func} "--- INSTALLING PROJECT FILES & DEPENDENCIES ---" INFO
 
     # Determine which package set to use
-    local PACKAGES_TO_INSTALL
+    local PACKAGES_TO_INSTALL REQUIRED_PACKAGES
     if [ "$TARGET_NODE" == "alpha" ]; then
-        PACKAGES_TO_INSTALL=("${ALPHA_PACKAGES[@]}")
+        REQUIRED_PACKAGES=("${ALPHA_PACKAGES[@]}")
         SERVICES_TO_ENABLE=("${ALPHA_SERVICES[@]}")
     elif [ "$TARGET_NODE" == "beta" ]; then
-        PACKAGES_TO_INSTALL=("${BETA_PACKAGES[@]}")
+        REQUIRED_PACKAGES=("${BETA_PACKAGES[@]}")
         SERVICES_TO_ENABLE=("${BETA_SERVICES[@]}")
     else
         log_message ${func} "Unknown target node '$TARGET_NODE'. Cannot install node-specific packages." ERROR
@@ -259,6 +259,13 @@ install_project() {
     fi
 
     # Install Dependencies using the node-specific array
+    for req_pkg in "${REQUIRED_PACKAGES[@]}"; do
+        # Check if package is installed, reducing APT overhead
+        if ! $(dpkg -l ${req_pkg} 2>&1 | grep -q "ii"); then
+            # Package not installed; add to list
+            PACKAGES_TO_INSTALL+=("${req_pkg}")
+        fi
+    done
     log_message ${func} "Installing required system packages for ${TARGET_NODE}: ${PACKAGES_TO_INSTALL[*]}..." DEBUG
     sudo apt update >/dev/null 2>&1
     sudo apt install -y "${PACKAGES_TO_INSTALL[@]}"
@@ -281,7 +288,7 @@ install_project() {
 
     log_message ${func} "Project files copied and ownership set to $INSTALL_DIR." WARNING
 
-    # Install and enable services
+    # Install all detected services
     for service_file in $(find "$INSTALL_DIR" -type f -name "*.service"); do
         local SERVICE_NAME="$(basename ${service_file})"
         local SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
@@ -297,7 +304,7 @@ install_project() {
     sed -i "s/google.com/$NEIGHBOR_IP/g" $INSTALL_DIR/common/connection_status_led.py
     log_message ${func} "Updated connection status script to ping ${NEIGHBOR_IP}." DEBUG
 
-    # Enable and start services
+    # Enable and start required services only
     sudo systemctl daemon-reload
     for service in ${SERVICES_TO_ENABLE[@]}; do
         sudo systemctl enable --quiet --now "$service"
@@ -305,6 +312,8 @@ install_project() {
             log_message ${func} "Error enabling service "$service"." ERROR
         else
             log_message ${func} "Service "$service" enabled successfully." INFO
+            # Refresh existing services to use latest changes
+            sudo systemctl restart --quiet "$service"
         fi
     done
     
