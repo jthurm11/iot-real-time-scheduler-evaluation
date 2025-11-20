@@ -266,9 +266,15 @@ install_project() {
             PACKAGES_TO_INSTALL+=("${req_pkg}")
         fi
     done
-    log_message ${func} "Installing required system packages for ${TARGET_NODE}: ${PACKAGES_TO_INSTALL[*]}..." DEBUG
-    sudo apt update >/dev/null 2>&1
-    sudo apt install -y "${PACKAGES_TO_INSTALL[@]}"
+
+    # Check length of array. If all packages are installed, skip APT overhead
+    if [[ "${#PACKAGES_TO_INSTALL[@]}" == 0 ]]; then
+        log_message ${func} "All packages installed. Skipping package update" DEBUG
+    else
+        log_message ${func} "Installing required system packages for ${TARGET_NODE}: ${PACKAGES_TO_INSTALL[*]}..." DEBUG
+        sudo apt update >/dev/null 2>&1
+        sudo apt install -y "${PACKAGES_TO_INSTALL[@]}"
+    fi
 
     # Create target directory and copy all files
     sudo mkdir -p "$INSTALL_DIR"
