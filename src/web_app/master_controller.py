@@ -217,6 +217,41 @@ def fan_data_listener(listen_ip, port):
 
 
 # --- NEW: EXPERIMENT MANAGEMENT LOGIC ---
+def experiment_finished_callback():
+    """
+    Called by an ExperimentManager thread when a timed experiment (like Iperf 60s UDP) 
+    completes naturally. This updates the global state as if a 'stop_load' command 
+    was received and processed.
+    """
+    global active_experiment
+    global experiment_lock
+
+    logger.info("[CALLBACK] Automatic STOP triggered by natural experiment completion.")
+    
+    with experiment_lock:
+        # 1. Update the config file
+        load_success = update_status_file(CONGESTION_CONFIG_FILE, 'LOAD_TYPE', 'none')
+
+        # 2. Update the system status immediately
+        with status_lock:
+            system_status["experiment_name"] = 'none'
+            system_status["load_magnitude"] = 0.0
+
+        # 3. Clean up the active_experiment reference
+        if active_experiment:
+            # We don't call active_experiment.stop() here, as the worker 
+            # thread calling this callback has already started the stop sequence.
+            active_experiment = None
+            
+        if load_success:
+            # Optionally emit an acknowledgement to the web app for UI confirmation
+            # Note: Emitting from non-socket threads requires app/socket context.
+            # If you are using Flask-SocketIO, you might need: 
+            # socketio.emit('command_ack', {'success': True, 'message': 'Experiment completed naturally.'})
+            emit('command_ack', {'success': True, 'message': f'Experiment finished.'})
+            logger.info("[CALLBACK] Global state successfully reset to 'none'.")
+        else:
+            logger.error("[CALLBACK] Failed to update status file during natural stop.")
 
 def run_experiment_handler_internal(action: str, new_load_type: str):
     """
@@ -261,7 +296,9 @@ def run_experiment_handler_internal(action: str, new_load_type: str):
             new_experiment = None
             if new_load_type == 'iperf':
                 new_experiment = IperfExperiment()
+                new_experiment.set_finish_callback(experiment_finished_callback)
             elif new_load_type == 'stress':
+                # Note: Stress test is manually stopped
                 new_experiment = StressExperiment()
             elif new_load_type == 'none':
                 logger.info("[EXPERIMENT] Passive mode selected (no load).")
