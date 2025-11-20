@@ -71,6 +71,9 @@ pid = PID(
     controller_direction='REVERSE'
 )
 
+# Optional: minimum duty to avoid ball free-fall when PID tries to go very low
+MIN_DUTY = 0  # set to e.g. 60–80 if you want a floor
+
 
 # ---- CONFIGURATION LOADING ----
 
@@ -85,7 +88,10 @@ def load_network_config():
                 current_state["fan_ip"] = config.get("FAN_NODE_IP", current_state["fan_ip"])
                 current_state["fan_port"] = config.get("FAN_COMMAND_PORT", current_state["fan_port"])
                 current_state["master_ip"] = config.get("WEB_APP_IP", current_state["master_ip"])
-                current_state["master_telemetry_port"] = config.get("SENSOR_DATA_LISTEN_PORT", current_state["master_telemetry_port"])
+                current_state["master_telemetry_port"] = config.get(
+                    "SENSOR_DATA_LISTEN_PORT",
+                    current_state["master_telemetry_port"]
+                )
 
         logger.info("Network configuration loaded.")
         return True
@@ -99,7 +105,7 @@ def load_network_config():
 
 def update_runtime_configs(pid_controller: PID):
     """
-    Periodically loads SETPOINT, OSCILLATION, and CONGESTION from files.
+    Loads SETPOINT, OSCILLATION, and CONGESTION from files.
 
     - Setpoint / Oscillation: from SETPOINT_CONFIG_FILE
       Keys:
@@ -165,33 +171,50 @@ def update_runtime_configs(pid_controller: PID):
         logger.debug(f"Failed to load congestion config: {e}")
 
 
+def config_watcher_thread_func(pid_controller: PID):
+    """
+    Separate thread that periodically updates runtime configs.
+    Avoids doing disk I/O in the PID loop.
+    """
+    logger.info("Config watcher thread started.")
+    while not stop_event.is_set():
+        try:
+            update_runtime_configs(pid_controller)
+        except Exception as e:
+            logger.error(f"Config watcher error: {e}")
+        time.sleep(0.25)  # update ~4x per second
+    logger.info("Config watcher thread stopping.")
+
+
 # ---- ULTRASONIC SENSOR FUNCTION ----
 
 def get_distance_cm():
-    """Reads distance from the ultrasonic sensor."""
-    GPIO.output(TRIG_PIN, GPIO.LOW)
-    time.sleep(0.000002)
+    """Reads distance from the ultrasonic sensor with short timeouts."""
+    try:
+        GPIO.output(TRIG_PIN, GPIO.LOW)
+        time.sleep(0.000002)
 
-    # Send pulse
-    GPIO.output(TRIG_PIN, GPIO.HIGH)
-    time.sleep(0.00001)
-    GPIO.output(TRIG_PIN, GPIO.LOW)
+        # Send pulse
+        GPIO.output(TRIG_PIN, GPIO.HIGH)
+        time.sleep(0.00001)
+        GPIO.output(TRIG_PIN, GPIO.LOW)
 
-    pulse_start = time.time()
-    while GPIO.input(ECHO_PIN) == 0 and not stop_event.is_set():
-        if time.time() - pulse_start > 0.1:
-            return 0.0
         pulse_start = time.time()
+        while GPIO.input(ECHO_PIN) == 0 and not stop_event.is_set():
+            if time.time() - pulse_start > 0.1:
+                return 0.0
 
-    pulse_end = time.time()
-    while GPIO.input(ECHO_PIN) == 1 and not stop_event.is_set():
-        if time.time() - pulse_end > 0.1:
-            return 0.0
         pulse_end = time.time()
+        while GPIO.input(ECHO_PIN) == 1 and not stop_event.is_set():
+            if time.time() - pulse_end > 0.1:
+                return 0.0
 
-    pulse_len = pulse_end - pulse_start
-    distance = pulse_len * 17150.0  # (cm)
-    return distance if distance > 0.0 else 0.0
+        pulse_len = pulse_end - pulse_start
+        distance = pulse_len * 17150.0  # (cm)
+        return distance if distance > 0.0 else 0.0
+    except Exception as e:
+        logger.error(f"Ultrasonic read error: {e}")
+        return 0.0
 
 
 # ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
@@ -208,28 +231,28 @@ def pid_control_thread_func(pid_controller: PID):
     while not stop_event.is_set():
         loop_start = time.time()
 
-        # 1. Load runtime configs (setpoint, oscillation, congestion)
-        update_runtime_configs(pid_controller)
+        # NOTE: config is now updated by config_watcher_thread_func,
+        # so we do NOT call update_runtime_configs() here anymore.
 
         # 2. Oscillation logic (if enabled)
         with state_lock:
-            if current_state["oscillation_enabled"]:
-                a = current_state["oscillation_a"]
-                b = current_state["oscillation_b"]
-                period = current_state["oscillation_period"]
+            osc_enabled = current_state["oscillation_enabled"]
+            a = current_state["oscillation_a"]
+            b = current_state["oscillation_b"]
+            period = current_state["oscillation_period"]
 
-                now = time.time()
-                cycle_index = int(now / period) % 2
-                target = a if cycle_index == 0 else b
-                next_target = b if cycle_index == 0 else a
+        if osc_enabled and period > 0:
+            now = time.time()
+            cycle_index = int(now / period) % 2
+            target = a if cycle_index == 0 else b
+            next_target = b if cycle_index == 0 else a
 
-                # time within current cycle
-                time_in_cycle = now % period
-                switch_in = period - time_in_cycle
+            time_in_cycle = now % period
+            switch_in = period - time_in_cycle
 
+            with state_lock:
                 current_state["pid_setpoint"] = target
                 pid_controller.setpoint = target
-
                 current_state["pid_next_setpoint"] = next_target
                 current_state["pid_switch_in"] = switch_in
 
@@ -238,7 +261,9 @@ def pid_control_thread_func(pid_controller: PID):
 
         # 4. PID compute
         output = pid_controller.compute(distance)
-        duty = int(max(0, min(255, output)))
+
+        # Clamp, with optional MIN_DUTY
+        duty = int(max(MIN_DUTY, min(255, output)))
 
         # 5. Congestion simulation
         with state_lock:
@@ -260,19 +285,29 @@ def pid_control_thread_func(pid_controller: PID):
         # 7. Send fan command if not dropped
         if packet_sent:
             try:
-                fan_sock.sendto(str(duty).encode('utf-8'),
-                                (current_state["fan_ip"], current_state["fan_port"]))
+                fan_sock.sendto(
+                    str(duty).encode('utf-8'),
+                    (current_state["fan_ip"], current_state["fan_port"])
+                )
                 logger.debug(f"FAN duty SENT: {duty:3d} | H: {distance:6.2f}cm")
             except Exception as e:
                 logger.error(f"Failed to send fan command: {e}")
         else:
             logger.warning(f"FAN command DROPPED (Loss Rate: {loss_rate:.1f}%)")
 
-        # 8. Maintain loop timing (respect sample_time)
+        # 8. Maintain loop timing (respect sample_time, but NEVER spin tight)
         elapsed = time.time() - loop_start
         sleep_time = pid_controller.sample_time - elapsed
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+
+        if sleep_time < 0:
+            # This was your freeze bug: previously, no sleep at all here → CPU hog.
+            logger.warning(
+                f"PID loop overrun by {-sleep_time:.4f}s (elapsed={elapsed:.4f}s). "
+                "Adding minimal sleep to avoid starving other threads."
+            )
+            sleep_time = 0.001  # tiny sleep so telemetry etc. still get CPU
+
+        time.sleep(sleep_time)
 
     logger.info("PID Control loop stopped.")
 
@@ -327,7 +362,7 @@ def main():
     if not load_network_config():
         return
 
-    # Load initial PID and Congestion Status
+    # Initial config load
     update_runtime_configs(pid)
     logger.info(f"PID Setpoint initialized to: {current_state['pid_setpoint']} cm")
     logger.info(
@@ -340,8 +375,12 @@ def main():
     telemetry_sender = threading.Thread(
         target=telemetry_sender_thread_func, name="TelemetrySender"
     )
+    config_watcher = threading.Thread(
+        target=config_watcher_thread_func, args=(pid,), name="ConfigWatcher", daemon=True
+    )
 
     try:
+        config_watcher.start()
         pid_thread.start()
         telemetry_sender.start()
         logger.info("Sensor/PID Controller threads started. Press Ctrl+C to stop.")
