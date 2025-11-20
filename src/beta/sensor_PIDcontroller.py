@@ -5,7 +5,7 @@ import socket
 import threading
 import json
 import logging
-import random
+import random  # Needed for packet loss simulation
 import csv
 import os
 from datetime import datetime

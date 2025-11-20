@@ -135,7 +135,7 @@ def initialize_config_files():
     update_status_file(CONGESTION_CONFIG_FILE, 'CONGESTION_DELAY', 0.0)
     update_status_file(CONGESTION_CONFIG_FILE, 'PACKET_LOSS_RATE', 0.0)
     update_status_file(SETPOINT_CONFIG_FILE, 'PID_SETPOINT', 20)
-    update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED')
+    #update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED')
 
     # Ensure traffic rules are cleared on start
     command = ['systemctl', 'stop', 'tc_controller.service']
@@ -505,7 +505,7 @@ def status_poller():
                 with open(SETPOINT_CONFIG_FILE, 'r') as f:
                     setpoint_data = json.load(f)
                     system_status["pid_setpoint"] = setpoint_data.get('PID_SETPOINT', 20.0)
-                    system_status["pid_status"] = setpoint_data.get('PID_STATUS', 'STOPPED')
+                    system_status["pid_status"] = setpoint_data.get('PID_STATUS', system_status["pid_status"])
 
                     # NEW: oscillation settings (keep them in sync with config + sensor)
                     system_status["oscillation_enabled"] = setpoint_data.get(
