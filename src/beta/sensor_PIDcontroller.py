@@ -58,7 +58,8 @@ current_state = {
     "oscillation_b": 30.0,
     "oscillation_period": 20.0,  # seconds
     "pid_next_setpoint": 30.0,
-    "pid_switch_in": 0.0
+    "pid_switch_in": 0.0,
+    "pid_status": "RUNNING"
 }
 
 stop_event = threading.Event()
@@ -146,6 +147,9 @@ def update_runtime_configs(pid_controller: PID):
             config = json.load(f)
 
         base_setpoint = config.get("PID_SETPOINT", current_state["pid_setpoint"])
+        
+        # Read the PID status flag (e.g., "RUNNING" or "STOPPED")
+        pid_status_cfg = config.get("PID_STATUS", current_state.get("pid_status", "RUNNING"))
 
         osc_enabled = config.get("OSCILLATION_ENABLED", current_state["oscillation_enabled"])
         osc_a = config.get("OSCILLATION_A", current_state["oscillation_a"])
@@ -153,6 +157,10 @@ def update_runtime_configs(pid_controller: PID):
         period = config.get("OSCILLATION_PERIOD_SEC", current_state["oscillation_period"])
 
         with state_lock:
+            # Update the PID status flag first
+            current_state["pid_status"] = pid_status_cfg.upper()
+            
+            # Update oscillation settings
             current_state["oscillation_enabled"] = bool(osc_enabled)
             current_state["oscillation_a"] = float(osc_a)
             current_state["oscillation_b"] = float(osc_b)
@@ -200,6 +208,7 @@ def get_distance_cm():
     GPIO.output(TRIG_PIN, GPIO.LOW)
 
     pulse_start = time.time()
+    # Use stop_event check to prevent blocking when system is shutting down
     while GPIO.input(ECHO_PIN) == 0 and not stop_event.is_set():
         if time.time() - pulse_start > 0.1:
             return 0.0
@@ -230,41 +239,53 @@ def pid_control_thread_func(pid_controller: PID):
     while not stop_event.is_set():
         loop_start = time.time()
 
-        # 1. Load runtime configs (setpoint, oscillation, congestion)
+        # 1. Load runtime configs (setpoint, oscillation, congestion, and PID_STATUS)
         update_runtime_configs(pid_controller)
 
         # 2. Oscillation logic (if enabled)
         with state_lock:
-            if current_state["oscillation_enabled"]:
-                a = current_state["oscillation_a"]
-                b = current_state["oscillation_b"]
-                period = current_state["oscillation_period"]
+            status = current_state["pid_status"]
 
-                now = time.time()
-                cycle_index = int(now / period) % 2
-                target = a if cycle_index == 0 else b
-                next_target = b if cycle_index == 0 else a
+            if status == "STOPPED":
+                # PID is disabled. Set duty to 0 and reset PID state to prevent windup.
+                distance = get_distance_cm()
+                duty = 0
+                pid_controller.initialize() # Reset I-term and last_output
+                logger.debug("PID STOPPED. Setting duty to 0.")
+        
+            else: # status == "RUNNING"
+                # 2. Oscillation logic (if enabled)
+                if current_state["oscillation_enabled"]:
+                    a = current_state["oscillation_a"]
+                    b = current_state["oscillation_b"]
+                    period = current_state["oscillation_period"]
 
-                # time within current cycle
-                time_in_cycle = now % period
-                switch_in = period - time_in_cycle
+                    now = time.time()
+                    cycle_index = int(now / period) % 2
+                    target = a if cycle_index == 0 else b
+                    next_target = b if cycle_index == 0 else a
 
-                current_state["pid_setpoint"] = target
-                pid_controller.setpoint = target
+                    # time within current cycle
+                    time_in_cycle = now % period
+                    switch_in = period - time_in_cycle
 
-                current_state["pid_next_setpoint"] = next_target
-                current_state["pid_switch_in"] = switch_in
+                    current_state["pid_setpoint"] = target
+                    pid_controller.setpoint = target
 
-        # 3. Read distance
-        distance = get_distance_cm()
+                    current_state["pid_next_setpoint"] = next_target
+                    current_state["pid_switch_in"] = switch_in
 
-        # 4. PID compute
-        output = pid_controller.compute(distance)
-        # Apply minimum fan duty to prevent free-fall
-        if output < MIN_DUTY:
-            duty = MIN_DUTY
-        else:
-            duty = int(min(255, output))
+            # 3. Read distance
+            distance = get_distance_cm()
+
+            # 4. PID compute
+            output = pid_controller.compute(distance)
+
+            # Apply minimum fan duty to prevent free-fall
+            if output < MIN_DUTY:
+                duty = MIN_DUTY
+            else:
+                duty = int(min(255, output))
 
         # 5. Congestion simulation
         with state_lock:
@@ -283,6 +304,7 @@ def pid_control_thread_func(pid_controller: PID):
             current_state["current_distance"] = distance
             current_state["current_duty"] = duty
 
+            
         # 7. Send fan command if not dropped
         if packet_sent:
             try:
@@ -294,7 +316,7 @@ def pid_control_thread_func(pid_controller: PID):
         else:
             logger.warning(f"FAN command DROPPED (Loss Rate: {loss_rate:.1f}%)")
 
-                # --- LOG THIS LOOP ---
+        # --- LOG THIS LOOP ---
         log_data = {
             "timestamp": time.time(),
             "distance": distance,
@@ -307,6 +329,7 @@ def pid_control_thread_func(pid_controller: PID):
             "osc_period": current_state["oscillation_period"],
             "next_setpoint": current_state["pid_next_setpoint"],
             "switch_in": current_state["pid_switch_in"],
+            "pid_status": current_state["pid_status"]
         }
         write_log_row(log_data)
 
@@ -339,6 +362,7 @@ def telemetry_sender_thread_func():
                     "delay": current_state["delay"],         # ms
                     "loss_rate": current_state["loss_rate"], # %
                     "fan_output_duty": current_state["current_duty"],
+                    "pid_status": current_state["pid_status"], # NEW: Include PID status
 
                     # Extra fields for oscillation visualization
                     "oscillation_enabled": current_state["oscillation_enabled"],
@@ -372,6 +396,7 @@ def main():
 
     # Load initial PID and Congestion Status
     update_runtime_configs(pid)
+    logger.info(f"PID Status initialized to: {current_state['pid_status']}")
     logger.info(f"PID Setpoint initialized to: {current_state['pid_setpoint']} cm")
     logger.info(
         f"Congestion initialized (Delay: {current_state['delay']}ms, Loss: {current_state['loss_rate']}%)"
@@ -404,6 +429,7 @@ def main():
         telemetry_sender.join(timeout=1.0)
 
         try:
+            # Ensure fan is zeroed out on shutdown
             fan_sock.sendto(b"0", (current_state["fan_ip"], current_state["fan_port"]))
             logger.info("Sent 0 duty cycle to fan.")
         except Exception:
@@ -417,3 +443,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
