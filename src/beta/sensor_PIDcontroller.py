@@ -256,7 +256,24 @@ def pid_control_thread_func(pid_controller: PID):
 
         if status == "STOPPED":
             # PID is disabled. Set duty to 0 and reset PID state to prevent windup.
-            distance = get_distance_cm()
+            try:
+                new_distance = get_distance_cm()
+                if new_distance <= 0.0:
+                    logger.warning("Invalid sensor reading (0.0 cm). Retaining last duty cycle.")
+                    distance = 0.0
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                    pass # Continue to congestion/send logic using the last known duty
+                
+                else:
+                    distance = new_distance
+                    with state_lock:
+                        current_state["current_distance"] = distance
+                        
+            except Exception as e:
+                # Catch any unexpected, fatal thread-killing exception from the sensor read
+                logger.error(f"FATAL I/O EXCEPTION: {e}. Retaining last known duty ({duty}).")
+
             duty = 0
             pid_controller.initialize() # Reset I-term and last_output
             logger.debug("PID STOPPED. Setting duty to 0.")
