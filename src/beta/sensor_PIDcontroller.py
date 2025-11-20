@@ -226,6 +226,7 @@ def get_distance_cm():
 
 
 # ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
+# ---- THREAD 1: PID CONTROL LOOP (The critical timing loop) ----
 
 def pid_control_thread_func(pid_controller: PID):
     """
@@ -239,22 +240,24 @@ def pid_control_thread_func(pid_controller: PID):
     while not stop_event.is_set():
         loop_start = time.time()
 
-        # 1. Load runtime configs (setpoint, oscillation, congestion, and PID_STATUS)
+        # 1. Load runtime configs (setpoint, oscillation, congestion, PID_STATUS)
         update_runtime_configs(pid_controller)
 
-        # 2. Oscillation logic (if enabled)
+        # 2. PID RUN/STOP logic
         with state_lock:
             status = current_state["pid_status"]
 
-            if status == "STOPPED":
-                # PID is disabled. Set duty to 0 and reset PID state to prevent windup.
-                distance = get_distance_cm()
-                duty = 0
-                pid_controller.initialize() # Reset I-term and last_output
-                logger.debug("PID STOPPED. Setting duty to 0.")
-        
-            else: # status == "RUNNING"
-                # 2. Oscillation logic (if enabled)
+        if status == "STOPPED":
+            # PID OFF: read distance, set fan to 0, reset controller
+            distance = get_distance_cm()
+            duty = 0
+            pid_controller.initialize()   # Reset I-term/windup
+            logger.debug("PID STOPPED. Setting duty = 0.")
+
+        else:
+            # PID RUNNING
+            # 2. Oscillation
+            with state_lock:
                 if current_state["oscillation_enabled"]:
                     a = current_state["oscillation_a"]
                     b = current_state["oscillation_b"]
@@ -265,29 +268,24 @@ def pid_control_thread_func(pid_controller: PID):
                     target = a if cycle_index == 0 else b
                     next_target = b if cycle_index == 0 else a
 
-                    # time within current cycle
                     time_in_cycle = now % period
                     switch_in = period - time_in_cycle
 
                     current_state["pid_setpoint"] = target
                     pid_controller.setpoint = target
-
                     current_state["pid_next_setpoint"] = next_target
                     current_state["pid_switch_in"] = switch_in
 
-            # 3. Read distance
+            # 3. Read ultrasonic sensor
             distance = get_distance_cm()
 
             # 4. PID compute
             output = pid_controller.compute(distance)
 
-            # Apply minimum fan duty to prevent free-fall
-            if output < MIN_DUTY:
-                duty = MIN_DUTY
-            else:
-                duty = int(min(255, output))
+            # clamp and enforce MIN_DUTY
+            duty = int(min(255, max(MIN_DUTY, output)))
 
-        # 5. Congestion simulation
+        # 5. Apply congestion simulation
         with state_lock:
             delay_s = current_state["delay"] / 1000.0
             loss_rate = current_state["loss_rate"]
@@ -295,49 +293,34 @@ def pid_control_thread_func(pid_controller: PID):
         if delay_s > 0:
             time.sleep(delay_s)
 
-        packet_sent = True
-        if loss_rate > 0.0 and random.random() * 100.0 < loss_rate:
-            packet_sent = False
+        packet_sent = not (loss_rate > 0 and random.random()*100 < loss_rate)
 
         # 6. Update shared state
         with state_lock:
             current_state["current_distance"] = distance
             current_state["current_duty"] = duty
 
-            
-        # 7. Send fan command if not dropped
+        # 7. Send fan command
         if packet_sent:
             try:
-                fan_sock.sendto(str(duty).encode('utf-8'),
+                fan_sock.sendto(str(duty).encode("utf-8"),
                                 (current_state["fan_ip"], current_state["fan_port"]))
                 logger.debug(f"FAN duty SENT: {duty:3d} | H: {distance:6.2f}cm")
             except Exception as e:
                 logger.error(f"Failed to send fan command: {e}")
         else:
-            logger.warning(f"FAN command DROPPED (Loss Rate: {loss_rate:.1f}%)")
+            logger.warning(f"FAN command DROPPED (Loss Rate {loss_rate:.1f}%)")
 
-        # --- LOG THIS LOOP ---
-        log_data = {
-            "timestamp": time.time(),
-            "distance": distance,
-            "setpoint": current_state["pid_setpoint"],
-            "duty": duty,
-            "delay_ms": current_state["delay"],
-            "loss_rate": current_state["loss_rate"],
-            "osc_a": current_state["oscillation_a"],
-            "osc_b": current_state["oscillation_b"],
-            "osc_period": current_state["oscillation_period"],
-            "next_setpoint": current_state["pid_next_setpoint"],
-            "switch_in": current_state["pid_switch_in"],
-            "pid_status": current_state["pid_status"]
-        }
-        write_log_row(log_data)
-
-        # 8. Maintain loop timing (respect sample_time)
+        # 8. Timing protection — prevent freeze when loop overruns
         elapsed = time.time() - loop_start
         sleep_time = pid_controller.sample_time - elapsed
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+
+        if sleep_time < 0:
+            # PID loop took too long -> prevent infinite tight loop
+            logger.warning(f"PID loop overrun by {-sleep_time:.4f}s")
+            sleep_time = 0.001  # tiny sleep to yield CPU
+
+        time.sleep(sleep_time)
 
     logger.info("PID Control loop stopped.")
 
