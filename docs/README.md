@@ -8,8 +8,8 @@ This directory contains all formal documentation, reports, presentations, and su
 | :--- | :--- | :--- |
 | [`Project Proposal`](Project_Proposal.pdf) | **Submitted 9/29/25** | The official project plan, objectives, hardware/software requirements, and timeline. |
 | [`Project Presentation Initial`](Project_Presentation_Initial.pdf) | **Presented 10/2/25** | Slides for the initial project presentation to the class. |
-| [`Project Progress Report I`](Project_Progres_Report_I.pdf) | *Pending* | Slides/report for the first project progress presentation. |
-| [`Project Progress Report II`](Project_Progres_Report_II.pdf) | *Pending* | Slides/report for the second project progress presentation. |
+| [`Project Progress Report I`](Project_Progress_Report_I.pdf) | **Presented 10/30/25** | Slides/report for the first project progress presentation. |
+| [`Project Progress Report II`](Project_Progress_Report_II.pdf) | **Presented 11/20/25** | Slides/report for the second project progress presentation. |
 | [`Final Presentation`](Final_Presentation.pptx) | *Pending* | Slides summarizing the project's results and findings. |
 | [`Final Report`](Final_Report.pdf) | *Pending* | The final document detailing experimental setup, methodology, data analysis, and conclusions. |
 
