@@ -1,5 +1,6 @@
 # Build/compile artifacts
 __pycache__/
+.devcontainer/
 
 # Dependency directories
 logs/
