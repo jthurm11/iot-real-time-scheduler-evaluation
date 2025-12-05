@@ -138,7 +138,11 @@ def initialize_config_files():
     update_status_file(CONGESTION_CONFIG_FILE, 'CONGESTION_DELAY', 0.0)
     update_status_file(CONGESTION_CONFIG_FILE, 'PACKET_LOSS_RATE', 0.0)
     update_status_file(SETPOINT_CONFIG_FILE, 'PID_SETPOINT', 20)
-    #update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED')
+    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_ENABLED', false)
+    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_A', 30)
+    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_B', 20)
+    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_PERIOD_SEC', 20)
+    update_status_file(SETPOINT_CONFIG_FILE, 'PID_STATUS', 'STOPPED')
 
     # Ensure traffic rules are cleared on start
     command = ['systemctl', 'stop', 'tc_controller.service']
@@ -322,7 +326,7 @@ def ssh_execute_command(host, command):
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     
     try:
-        client.connect(hostname=host, username=ubuntu, timeout=10)
+        client.connect(hostname=host, timeout=10)
         
         # Execute the command
         stdin, stdout, stderr = client.exec_command(command)
@@ -517,18 +521,17 @@ def handle_restart_service(data):
     service_name = data.get('service')
     
     if not service_name:
-        emit('server_notification', {'status': 'error', 'message': 'No service name provided.'})
+        emit('command_ack', {'success': False, 'message': 'No service name provided.'})
         return
 
     logger.warning(f"DANGER ZONE: Attempting to restart service: {service_name}...")
 
     if service_name == 'fan_controller.service':
         # REMOTE RESTART via SSH
-        fan_ip = CONFIG.get('FAN_NODE_IP')
         if not fan_ip:
             message = "Fan Node IP not found in configuration."
             logger.error(message)
-            emit('server_notification', {'status': 'error', 'message': message})
+            emit('command_ack', {'success': False, 'message': message})
             return
 
         command = "sudo systemctl restart fan_controller.service"
@@ -542,11 +545,11 @@ def handle_restart_service(data):
         if success:
             message = f"Successfully restarted '{service_name}' on remote Fan Node ({fan_ip})."
             logger.info(message)
-            emit('server_notification', {'status': 'success', 'message': message})
+            emit('command_ack', {'success': True, 'message': message})
         else:
             message = f"Failed to restart '{service_name}' on remote Fan Node. Error: {response}"
             logger.error(message)
-            emit('server_notification', {'status': 'error', 'message': message})
+            emit('command_ack', {'success': False, 'message': message})
             
     else:
         # LOCAL RESTART for web_app.service or sensor_controller.service
@@ -562,17 +565,17 @@ def handle_restart_service(data):
             if result.returncode == 0:
                 message = f"Successfully restarted '{service_name}' locally."
                 logger.info(message)
-                emit('server_notification', {'status': 'success', 'message': message})
+                emit('command_ack', {'success': True, 'message': message})
             else:
                 error_output = result.stderr.decode().strip()
                 message = f"Failed to restart '{service_name}' locally. Error: {error_output}. Check permissions."
                 logger.error(message)
-                emit('server_notification', {'status': 'error', 'message': message})
+                emit('command_ack', {'success': False, 'message': message})
                 
         except Exception as e:
             error_message = f"Execution error while trying to run systemctl locally: {e}"
             logger.error(error_message)
-            emit('server_notification', {'status': 'error', 'message': error_message})
+            emit('command_ack', {'success': False, 'message': error_message})
 
 # --- POLLER THREAD ---
 

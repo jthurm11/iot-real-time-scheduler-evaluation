@@ -242,29 +242,32 @@
                 </div>
 
                 <!-- DANGER ZONE!!! Service Restart Buttons -->
+                <!--
                 <div class="pt-4 mt-4 border-t border-gray-700 p-4 border-2 border-red-500 rounded-lg">
-                    <h3 class="text-md font-medium text-red-500 mb-3">Danger Zone</h3>
+                -->
+                <div class="bg-gray-800 shadow-lg p-4 border-2 border-red-500 rounded-xl">
+                    <h3 class="text-md font-medium text-red-400 mb-3">Danger Zone -- Restart Core Services</h3>
                     <div class="flex flex-wrap gap-2">
-                        
+
                         <!-- Restart Web App Service -->
                         <button id="restart-webapp-btn" 
-                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                class="flex-1 text-xs py-0.5 px-2 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
                                 onclick="confirmRestart('web_app.service', 'Web App')">
-                            Restart Web App
+                            Web App
                         </button>
 
                         <!-- Restart Fan Controller Service -->
                         <button id="restart-fan-btn" 
-                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                class="flex-1 text-xs py-0.5 px-2 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
                                 onclick="confirmRestart('fan_controller.service', 'Fan Controller')">
-                            Restart Fan Control
+                            Fan Control
                         </button>
 
-                        <!-- Restart Sensor Service (Original Button) -->
+                        <!-- Restart Sensor Service -->
                         <button id="restart-sensor-btn" 
-                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                class="flex-1 text-xs py-0.5 px-2 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
                                 onclick="confirmRestart('sensor_controller.service', 'Sensor Control')">
-                            Restart Sensor Service
+                            Sensor+PID
                         </button>
 
                     </div>
