@@ -138,7 +138,7 @@ def initialize_config_files():
     update_status_file(CONGESTION_CONFIG_FILE, 'CONGESTION_DELAY', 0.0)
     update_status_file(CONGESTION_CONFIG_FILE, 'PACKET_LOSS_RATE', 0.0)
     update_status_file(SETPOINT_CONFIG_FILE, 'PID_SETPOINT', 20)
-    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_ENABLED', false)
+    update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_ENABLED', False)
     update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_A', 30)
     update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_B', 20)
     update_status_file(SETPOINT_CONFIG_FILE, 'OSCILLATION_PERIOD_SEC', 20)
