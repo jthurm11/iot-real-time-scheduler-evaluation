@@ -13,6 +13,7 @@ import math
 import logging
 import socket
 import threading
+import paramiko
 
 # Third-party libraries
 from flask import Flask, render_template, request, jsonify
@@ -35,6 +36,7 @@ CONGESTION_CONFIG_FILE = '/opt/project/common/congestion_config.json'
 # These are all safe default values to use until load_network_config replaces them. 
 fan_command_ip = "127.0.0.1"
 fan_command_port = 5005
+fan_ip = "192.168.22.1"
 sensor_ip = "127.0.0.1"
 sensor_command_port = 5004
 sensor_telemetry_port = 5006
@@ -90,7 +92,7 @@ stop_event = threading.Event()
 # --- CONFIGURATION LOADING ---
 def load_network_config():
     """Loads network configuration from the shared JSON file."""
-    global fan_command_ip, fan_command_port, sensor_ip, sensor_command_port, \
+    global fan_command_ip, fan_command_port, fan_ip, sensor_ip, sensor_command_port, \
            sensor_telemetry_port, fan_telemetry_port, web_app_port, web_app_ip
     
     try:
@@ -99,6 +101,7 @@ def load_network_config():
             
             fan_command_ip = config.get("FAN_COMMAND_IP", fan_command_ip)
             fan_command_port = config.get("FAN_COMMAND_PORT", fan_command_port)
+            fan_ip = config.get("FAN_NODE_IP", fan_ip)
             sensor_ip = config.get("SENSOR_IP", sensor_ip)
             sensor_command_port = config.get("SENSOR_COMMAND_PORT", sensor_command_port)
             sensor_telemetry_port = config.get("SENSOR_DATA_LISTEN_PORT", sensor_telemetry_port)
@@ -313,6 +316,38 @@ def run_experiment_handler_internal(action: str, new_load_type: str):
                 active_experiment.start()
                 logger.info(f"[EXPERIMENT] New experiment '{new_load_type}' started in background.")
 
+def ssh_execute_command(host, command):
+    """Executes a command on a remote host via SSH."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
+    try:
+        client.connect(hostname=host, username=ubuntu, timeout=10)
+        
+        # Execute the command
+        stdin, stdout, stderr = client.exec_command(command)
+        
+        # Read the output and error streams
+        output = stdout.read().decode().strip()
+        error = stderr.read().decode().strip()
+        
+        # Check if the command failed (systemctl will typically write errors to stderr)
+        if error and "failed" in error.lower():
+            logger.error(f"SSH Command failed on {host}: {error}")
+            return False, error
+        
+        return True, output
+        
+    except paramiko.AuthenticationException:
+        error_msg = "SSH Authentication failed. Check username and password."
+        logger.error(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"SSH connection or execution error: {e}"
+        logger.error(error_msg)
+        return False, error_msg
+    finally:
+        client.close()
 
 # --- SOCKETIO (WEB DASHBOARD) HANDLERS ---
 
@@ -473,6 +508,71 @@ def handle_control_command(data):
             # Handle case where 'systemctl' command itself is not found
             emit('command_ack', {'success': False, 'message': f'Systemctl command not found. Is Systemd installed?'})
 
+@socketio.on('restart_service')
+def handle_restart_service(data):
+    """
+    Handles the request to restart a systemd service. 
+    Executes locally for web_app/sensor_controller, and remotely via SSH for fan_controller.
+    """
+    service_name = data.get('service')
+    
+    if not service_name:
+        emit('server_notification', {'status': 'error', 'message': 'No service name provided.'})
+        return
+
+    logger.warning(f"DANGER ZONE: Attempting to restart service: {service_name}...")
+
+    if service_name == 'fan_controller.service':
+        # REMOTE RESTART via SSH
+        fan_ip = CONFIG.get('FAN_NODE_IP')
+        if not fan_ip:
+            message = "Fan Node IP not found in configuration."
+            logger.error(message)
+            emit('server_notification', {'status': 'error', 'message': message})
+            return
+
+        command = "sudo systemctl restart fan_controller.service"
+        success, response = ssh_execute_command(
+            host=fan_ip, 
+            #username=FAN_NODE_SSH_USER, 
+            #password=FAN_NODE_SSH_PASSWORD, 
+            command=command
+        )
+
+        if success:
+            message = f"Successfully restarted '{service_name}' on remote Fan Node ({fan_ip})."
+            logger.info(message)
+            emit('server_notification', {'status': 'success', 'message': message})
+        else:
+            message = f"Failed to restart '{service_name}' on remote Fan Node. Error: {response}"
+            logger.error(message)
+            emit('server_notification', {'status': 'error', 'message': message})
+            
+    else:
+        # LOCAL RESTART for web_app.service or sensor_controller.service
+        # Note: These services must be on the same machine as the master controller
+        command = f"sudo systemctl restart {service_name}"
+
+        try:
+            # Using subprocess.run is safer and allows checking the exit code
+            # We assume the user running master_controller.py has sudo permissions for systemctl
+            result = subprocess.run(command, shell=True, check=False, 
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            if result.returncode == 0:
+                message = f"Successfully restarted '{service_name}' locally."
+                logger.info(message)
+                emit('server_notification', {'status': 'success', 'message': message})
+            else:
+                error_output = result.stderr.decode().strip()
+                message = f"Failed to restart '{service_name}' locally. Error: {error_output}. Check permissions."
+                logger.error(message)
+                emit('server_notification', {'status': 'error', 'message': message})
+                
+        except Exception as e:
+            error_message = f"Execution error while trying to run systemctl locally: {e}"
+            logger.error(error_message)
+            emit('server_notification', {'status': 'error', 'message': error_message})
 
 # --- POLLER THREAD ---
 

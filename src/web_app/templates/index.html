@@ -241,6 +241,35 @@
                     </div>
                 </div>
 
+                <!-- DANGER ZONE!!! Service Restart Buttons -->
+                <div class="pt-4 mt-4 border-t border-gray-700 p-4 border-2 border-red-500 rounded-lg">
+                    <h3 class="text-md font-medium text-red-500 mb-3">Danger Zone</h3>
+                    <div class="flex flex-wrap gap-2">
+                        
+                        <!-- Restart Web App Service -->
+                        <button id="restart-webapp-btn" 
+                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                onclick="confirmRestart('web_app.service', 'Web App')">
+                            Restart Web App
+                        </button>
+
+                        <!-- Restart Fan Controller Service -->
+                        <button id="restart-fan-btn" 
+                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                onclick="confirmRestart('fan_controller.service', 'Fan Controller')">
+                            Restart Fan Control
+                        </button>
+
+                        <!-- Restart Sensor Service (Original Button) -->
+                        <button id="restart-sensor-btn" 
+                                class="flex-1 py-1 px-3 rounded-lg transition duration-200 ease-in-out bg-gray-700 text-gray-200 border border-gray-600 hover:bg-yellow-500 hover:text-gray-900 hover:border-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+                                onclick="confirmRestart('sensor_controller.service', 'Sensor Control')">
+                            Restart Sensor Service
+                        </button>
+
+                    </div>
+                </div>
+
             </div>
 
         </div>
@@ -339,7 +368,7 @@
         const oscBValueSpan = document.getElementById("osc-b-value");
         const oscPeriodSlider = document.getElementById("osc-period-slider");
         const oscPeriodValueSpan = document.getElementById("osc-period-value");
-        
+
         const messageBox = document.getElementById('message-box');
 
 
@@ -579,6 +608,13 @@
             });
 
             console.log("Sent oscillation update:", { enabled, a, b, period });
+        }
+
+        function confirmRestart(serviceName, friendlyName) {
+            if (confirm(`WARNING: Are you sure you want to restart the ${friendlyName} Service (${serviceName})? This will stop its current operation temporarily.`)) {
+                console.log(`Sending restart command for: ${serviceName}`);
+                socket.emit('restart_service', { service: serviceName });
+            }
         }
 
         // --- Slider Event Listeners (Auto-Apply on Change) ---
