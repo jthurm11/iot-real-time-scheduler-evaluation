@@ -42,6 +42,7 @@ BETA_PACKAGES=(
     "iperf3"
     "stress-ng"
     "python3-psutil"
+    "python3-paramiko"
 )
 
 # --- SYSTEMD SERVICES ---
