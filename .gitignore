@@ -1,6 +1,7 @@
 # Build/compile artifacts
 __pycache__/
 .devcontainer/
+.vscode/
 
 # Dependency directories
 logs/
